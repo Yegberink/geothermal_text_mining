@@ -16,6 +16,7 @@ __pycache__/
 input_data/
 output/
 checkpoints/
+cache/
 geo_cache.jsonl
 geo_checkpoint.parquet
 geo_class_cache.jsonl
@@ -24,6 +25,10 @@ geo_partial_results.csv
 geo_class_partial_results.csv
 geo_cache.jsonl
 geo_class_cache.jsonl
+
+# Large dataset files that should not be tracked
+data/*.gpkg
+annotation/*.csv
 
 # Notebook and editor state
 *.ipynb_checkpoints
