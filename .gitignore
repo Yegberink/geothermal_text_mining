@@ -1,0 +1,34 @@
+.DS_Store
+pixi.lock
+.pixi/
+.snakemake/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite
+*.db
+*.log
+*.tmp
+*.temp
+
+# Data inputs and results
+input_data/
+output/
+checkpoints/
+geo_cache.jsonl
+geo_checkpoint.parquet
+geo_class_cache.jsonl
+geo_class_checkpoint.parquet
+geo_partial_results.csv
+geo_class_partial_results.csv
+geo_cache.jsonl
+geo_class_cache.jsonl
+
+# Notebook and editor state
+*.ipynb_checkpoints
+.vscode/
+.idea/
+
+# OS files
+*.DS_Store

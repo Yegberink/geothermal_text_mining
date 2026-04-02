@@ -1,0 +1,39 @@
+python: python
+language: italian
+
+ollama:
+  url: http://localhost:11434/api/generate
+  location_model: llama3.1:8b
+  geothermal_model: llama3.1:8b
+  save_every: 25
+  sleep_s: 0.0
+
+layers:
+  municipality: gemeente_gegeneraliseerd
+  province: provincie_gegeneraliseerd
+
+paths:
+  input_rtf_dir: input_data
+  newspaper_regions_csv: data/newspaper_regions.csv
+  cbs_gpkg: data/cbsgebiedsindelingen2025.gpkg
+  keywords_topics_csv: vocab/keywords_topics.csv
+
+  articles_csv: output/text/articles_cleaned.csv
+  paragraphs_csv: output/text/newspapers_cleaned_paragraphs.csv
+  paragraph_locations_csv: output/text/paragraph_locations_ollama.csv
+  paragraph_geothermal_csv: output/text/paragraph_geothermal_ollama.csv
+  sentences_with_absa_csv: output/text/sentences_with_absa_v2.csv
+  sentences_with_absa_and_geo_gpkg: output/text/sentences_with_absa_and_geo_v2.gpkg
+  sentence_offline_geocoding_csv: output/text/sentence_offline_geocoding.csv
+  sentences_with_categories_gpkg: output/text/sentences_with_categories.gpkg
+  sentences_with_categories_long_csv: output/text/sentences_with_categories_long.csv
+  sentences_with_categories_short_csv: output/text/sentences_with_categories_short.csv
+  sentences_with_categories_admin_gpkg: output/text/sentences_with_categories_admin.gpkg
+  sentences_with_categories_admin_csv: output/text/sentences_with_categories_admin.csv
+
+  geo_checkpoint: cache/geo_checkpoint.parquet
+  geo_cache: cache/geo_cache.jsonl
+  geo_partial_csv: cache/geo_partial_results.csv
+  geo_class_checkpoint: cache/geo_class_checkpoint.parquet
+  geo_class_cache: cache/geo_class_cache.jsonl
+  geo_class_partial_csv: cache/geo_class_partial_results.csv
