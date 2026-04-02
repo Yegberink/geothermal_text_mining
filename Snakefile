@@ -8,6 +8,7 @@ OLLAMA = config["ollama"]
 PATHS = config["paths"]
 LANGUAGE = config.get("language")
 LAYERS = config["layers"]
+COUNTRY = config.get("country")
 
 
 def _local_path(path_str):
@@ -51,38 +52,9 @@ rule preprocess_rtf_to_paragraphs:
         """
 
 
-rule extract_locations:
-    input:
-        PATHS["paragraphs_csv"],
-    output:
-        csv=PATHS["paragraph_locations_csv"],
-    params:
-        checkpoint=PATHS["geo_checkpoint"],
-        cache=PATHS["geo_cache"],
-        partial=PATHS["geo_partial_csv"],
-        model=OLLAMA["location_model"],
-        url=OLLAMA["url"],
-        sleep_s=OLLAMA["sleep_s"],
-        save_every=OLLAMA["save_every"],
-    shell:
-        """
-        {PYTHON} scripts/locations_ollama.py \
-          --project-dir {PROJECT_DIR} \
-          --input-csv {input} \
-          --out-csv {output.csv} \
-          --checkpoint {params.checkpoint} \
-          --cache {params.cache} \
-          --partial-csv {params.partial} \
-          --ollama-url {params.url} \
-          --model {params.model} \
-          --sleep-s {params.sleep_s} \
-          --save-every {params.save_every}
-        """
-
-
 rule classify_geothermal:
     input:
-        PATHS["paragraph_locations_csv"],
+        PATHS["paragraphs_csv"],
     output:
         csv=PATHS["paragraph_geothermal_csv"],
     params:
@@ -104,6 +76,37 @@ rule classify_geothermal:
           --partial-csv {params.partial} \
           --ollama-url {params.url} \
           --model {params.model} \
+          --country {COUNTRY} \
+          --sleep-s {params.sleep_s} \
+          --save-every {params.save_every}
+        """
+
+
+rule extract_locations:
+    input:
+        PATHS["paragraph_geothermal_csv"],
+    output:
+        csv=PATHS["paragraph_locations_csv"],
+    params:
+        checkpoint=PATHS["geo_checkpoint"],
+        cache=PATHS["geo_cache"],
+        partial=PATHS["geo_partial_csv"],
+        model=OLLAMA["location_model"],
+        url=OLLAMA["url"],
+        sleep_s=OLLAMA["sleep_s"],
+        save_every=OLLAMA["save_every"],
+    shell:
+        """
+        {PYTHON} scripts/locations_ollama.py \
+          --project-dir {PROJECT_DIR} \
+          --input-csv {input} \
+          --out-csv {output.csv} \
+          --checkpoint {params.checkpoint} \
+          --cache {params.cache} \
+          --partial-csv {params.partial} \
+          --ollama-url {params.url} \
+          --model {params.model} \
+          --country {COUNTRY} \
           --sleep-s {params.sleep_s} \
           --save-every {params.save_every}
         """
@@ -111,7 +114,7 @@ rule classify_geothermal:
 
 rule run_absa:
     input:
-        PATHS["paragraph_geothermal_csv"],
+        PATHS["paragraph_locations_csv"],
     output:
         PATHS["sentences_with_absa_csv"],
     shell:

@@ -1,5 +1,61 @@
 python: python
-language: italian
+language: dutch
+country: Netherlands
+
+preprocessing:
+  date_locale:
+    month_translations:
+      januari: January
+      februari: February
+      maart: March
+      april: April
+      mei: May
+      juni: June
+      juli: July
+      augustus: August
+      september: September
+      oktober: October
+      november: November
+      december: December
+      gennaio: January
+      febbraio: February
+      marzo: March
+      aprile: April
+      maggio: May
+      giugno: June
+      luglio: July
+      agosto: August
+      settembre: September
+      ottobre: October
+      novembre: November
+      dicembre: December
+    weekday_names:
+      - maandag
+      - dinsdag
+      - woensdag
+      - donderdag
+      - vrijdag
+      - zaterdag
+      - zondag
+      - lunedì
+      - lunedi
+      - martedì
+      - martedi
+      - mercoledì
+      - mercoledi
+      - giovedì
+      - giovedi
+      - venerdì
+      - venerdi
+      - sabato
+      - domenica
+      - monday
+      - tuesday
+      - wednesday
+      - thursday
+      - friday
+      - saturday
+      - sunday
 
 ollama:
   url: http://localhost:11434/api/generate

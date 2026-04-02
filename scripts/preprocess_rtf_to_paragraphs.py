@@ -27,6 +27,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import torch
+import yaml
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from tqdm.auto import tqdm
 
@@ -44,6 +45,7 @@ INPUT_RTF_DIR = PROJECT_DIR / "input_data"
 
 # Optional mapping file: must contain columns: newspaper, region_name
 NEWSPAPER_REGION_CSV = PROJECT_DIR / "data" / "newspaper_regions.csv"
+DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "config.yaml"
 
 # Outputs
 OUTPUT_DIR = PROJECT_DIR / "output" / "text"
@@ -77,10 +79,145 @@ def rtf_to_text(rtf_content: str) -> str:
         from striprtf.striprtf import rtf_to_text as _rtf_to_text  # type: ignore
         return _rtf_to_text(rtf_content)
     except Exception:
-        # Very rough fallback; good enough to keep pipeline running.
-        txt = re.sub(r"{\\.*?}|\\[a-zA-Z]+\d* ?|[{}]", " ", rtf_content)
-        txt = re.sub(r"\s+", " ", txt)
-        return txt.strip()
+        return rtf_to_text_fallback(rtf_content)
+
+
+def rtf_to_text_fallback(rtf_content: str) -> str:
+    """Best-effort RTF reader that strips formatting groups and keeps visible text."""
+    destinations = {
+        "aftncn", "aftnsep", "aftnsepc", "annotation", "author", "background",
+        "bkmkend", "bkmkstart", "blipuid", "buptim", "category", "colorschememapping",
+        "colortbl", "comment", "company", "creatim", "datafield", "datastore",
+        "defchp", "defpap", "do", "doccomm", "docvar", "dptxbxtext", "ebcend",
+        "ebcstart", "factoidname", "falt", "fchars", "ffdeftext", "ffentrymcr",
+        "ffexitmcr", "ffformat", "ffhelptext", "ffl", "ffname", "ffstattext",
+        "file", "filetbl", "fldinst", "fldtype", "fname", "fontemb", "fontfile",
+        "fonttbl", "footer", "footerf", "footerl", "footerr", "footnote", "formfield",
+        "ftncn", "ftnsep", "ftnsepc", "g", "generator", "gridtbl", "header", "headerf",
+        "headerl", "headerr", "hl", "hlfr", "hlinkbase", "htmltag", "info", "keycode",
+        "keywords", "latentstyles", "lchars", "levelnumbers", "leveltext", "list",
+        "listlevel", "listname", "listoverride", "listoverridetable", "listpicture",
+        "liststylename", "listtable", "manager", "margPr", "mhtmltag", "mmath",
+        "moMath", "moMathPara", "objalias", "objclass", "objdata", "object", "objname",
+        "objsect", "objtime", "oldcprops", "oldpprops", "oldsprops", "oldtprops",
+        "oleclsid", "operator", "panose", "password", "passwordhash", "pgp", "pgptbl",
+        "picprop", "pict", "pn", "pnseclvl", "pntext", "propname", "protend", "protstart",
+        "protusertbl", "pxe", "result", "revtbl", "rsidtbl", "rxe", "shp", "shpgrp",
+        "shpinst", "shppict", "shprslt", "shptxt", "sn", "sp", "staticval", "stylesheet",
+        "subject", "sv", "themedata", "title", "txe", "ud", "upr", "userprops",
+        "wgrffmtfilter", "xmlattrname", "xmlattrvalue", "xmlclose", "xmlname",
+        "xmlnstbl", "xmlopen",
+    }
+    specialchars = {
+        "par": "\n",
+        "line": "\n",
+        "tab": "\t",
+        "emdash": "\u2014",
+        "endash": "\u2013",
+        "emspace": "\u2003",
+        "enspace": "\u2002",
+        "qmspace": "\u2005",
+        "bullet": "\u2022",
+        "lquote": "\u2018",
+        "rquote": "\u2019",
+        "ldblquote": "\u201c",
+        "rdblquote": "\u201d",
+    }
+
+    stack: List[Tuple[int, bool]] = []
+    ignorable = False
+    ucskip = 1
+    curskip = 0
+    out: List[str] = []
+    i = 0
+    text = rtf_content
+
+    while i < len(text):
+        ch = text[i]
+
+        if curskip > 0:
+            curskip -= 1
+            i += 1
+            continue
+
+        if ch == "{":
+            stack.append((ucskip, ignorable))
+            i += 1
+            continue
+
+        if ch == "}":
+            if stack:
+                ucskip, ignorable = stack.pop()
+            i += 1
+            continue
+
+        if ch == "\\":
+            i += 1
+            if i >= len(text):
+                break
+
+            ch = text[i]
+            if ch in "\\{}":
+                if not ignorable:
+                    out.append(ch)
+                i += 1
+                continue
+
+            if ch == "*":
+                ignorable = True
+                i += 1
+                continue
+
+            if ch == "'":
+                if i + 2 < len(text):
+                    hexcode = text[i + 1:i + 3]
+                    try:
+                        decoded = bytes.fromhex(hexcode).decode("cp1252")
+                    except Exception:
+                        decoded = ""
+                    if not ignorable:
+                        out.append(decoded)
+                    i += 3
+                    continue
+
+            match = re.match(r"([a-zA-Z]+)(-?\d+)? ?", text[i:])
+            if match:
+                word = match.group(1)
+                arg = match.group(2)
+                i += len(match.group(0))
+
+                if word in destinations:
+                    ignorable = True
+                elif word == "uc":
+                    ucskip = int(arg) if arg else 1
+                elif word == "u":
+                    if arg and not ignorable:
+                        codepoint = int(arg)
+                        if codepoint < 0:
+                            codepoint += 65536
+                        out.append(chr(codepoint))
+                    curskip = ucskip
+                elif word in specialchars and not ignorable:
+                    out.append(specialchars[word])
+                continue
+
+            if ch in "~_-":
+                if not ignorable:
+                    out.append(" " if ch == "~" else "\n" if ch == "_" else "-")
+                i += 1
+                continue
+
+            i += 1
+            continue
+
+        if not ignorable:
+            out.append(ch)
+        i += 1
+
+    txt = "".join(out)
+    txt = re.sub(r"[^\S\n]+", " ", txt)
+    txt = re.sub(r"\n{3,}", "\n\n", txt)
+    return txt.strip()
 
 
 def read_text_with_fallbacks(p: Path) -> str:
@@ -97,7 +234,7 @@ def read_text_with_fallbacks(p: Path) -> str:
 # Article extraction
 # =============================
 
-MONTH_TRANSLATIONS = {
+DEFAULT_MONTH_TRANSLATIONS = {
     "januari": "January",
     "februari": "February",
     "maart": "March",
@@ -110,6 +247,25 @@ MONTH_TRANSLATIONS = {
     "oktober": "October",
     "november": "November",
     "december": "December",
+    "gennaio": "January",
+    "febbraio": "February",
+    "marzo": "March",
+    "aprile": "April",
+    "maggio": "May",
+    "giugno": "June",
+    "luglio": "July",
+    "agosto": "August",
+    "settembre": "September",
+    "ottobre": "October",
+    "novembre": "November",
+    "dicembre": "December",
+}
+
+DEFAULT_WEEKDAY_NAMES = {
+    "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag",
+    "lunedì", "lunedi", "martedì", "martedi", "mercoledì", "mercoledi", "giovedì",
+    "giovedi", "venerdì", "venerdi", "sabato", "domenica",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
 }
 
 _END_DOC_SPLIT_RE = re.compile(r"(?is)\bEnd of Document\b")
@@ -121,54 +277,176 @@ _BODY_RE = re.compile(
 
 _LEN_RE = re.compile(r"(?is)\bLength:\s*(\d+)")
 _SECTION_RE = re.compile(r"(?is)\bSection:\s*(.*?);")
-_LOAD_DATE_RE = re.compile(r"(?is)\bLoad-Date:\s*(.*)")
+_LOAD_DATE_RE = re.compile(r"(?is)\bLoad-Date:\s*(.*?)(?:\n|$)")
 _DATE_RE = re.compile(r"(?i)\b(\d{1,2}\s+[A-Za-zÀ-ÿ]+\s+\d{4})\b")  # supports Dutch months too
+_HEADER_STOP_RE = re.compile(
+    r"(?i)^(copyright|section:|length:|byline:|highlight:|body\b|load-date:)"
+)
+_DATE_LINE_RE = re.compile(r"(?i)^\s*\d{1,2}\s+[A-Za-zÀ-ÿ]+\s+\d{4}(?:\s+[A-Za-zÀ-ÿ]+)?\s*$")
 
 
-def translate_dutch_months(s: str) -> str:
+def normalize_article_text(text: str) -> str:
+    if not text:
+        return ""
+    text = str(text).replace("\ufeff", "")
+    text = text.replace("\u00a0", " ")
+    text = text.replace("\u2028", "\n").replace("\u2029", "\n")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def article_lines(article: str) -> List[str]:
+    return [ln.strip() for ln in normalize_article_text(article).split("\n") if ln.strip()]
+
+
+def load_preprocessing_config(config_path: Path) -> Tuple[Dict[str, str], List[str]]:
+    month_translations = dict(DEFAULT_MONTH_TRANSLATIONS)
+    weekday_names = list(DEFAULT_WEEKDAY_NAMES)
+
+    if not config_path.exists():
+        return month_translations, weekday_names
+
+    with config_path.open("r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+
+    preprocessing = config.get("preprocessing", {}) or {}
+    date_locale = preprocessing.get("date_locale", {}) or {}
+
+    extra_months = date_locale.get("month_translations", {}) or {}
+    if isinstance(extra_months, dict):
+        month_translations.update({str(k): str(v) for k, v in extra_months.items()})
+
+    extra_weekdays = date_locale.get("weekday_names", []) or []
+    if isinstance(extra_weekdays, list):
+        weekday_names.extend(str(day) for day in extra_weekdays)
+
+    weekday_names = list(dict.fromkeys(weekday_names))
+    return month_translations, weekday_names
+
+
+def translate_month_names(s: str, month_translations: Dict[str, str]) -> str:
     out = str(s)
-    for nl, en in MONTH_TRANSLATIONS.items():
-        out = re.sub(rf"\b{nl}\b", en, out, flags=re.IGNORECASE)
+    for source_name, english_name in month_translations.items():
+        out = re.sub(rf"\b{re.escape(source_name)}\b", english_name, out, flags=re.IGNORECASE)
     return out
 
 
-def extract_title(article: str) -> str:
-    for line in article.splitlines():
-        t = line.strip()
-        if t:
-            return t
+def cleanup_date_text(s: str, month_translations: Dict[str, str], weekday_names: List[str]) -> str:
+    text = translate_month_names(s, month_translations)
+    weekday_pattern = r"\b(" + "|".join(sorted(re.escape(day) for day in weekday_names)) + r")\b"
+    text = re.sub(weekday_pattern, "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def split_header_body(article: str) -> Tuple[List[str], str]:
+    normalized = normalize_article_text(article)
+    lines = [ln.strip() for ln in normalized.split("\n")]
+
+    body_idx = None
+    for i, line in enumerate(lines):
+        if re.match(r"(?i)^body\b", line.strip()):
+            body_idx = i
+            break
+
+    if body_idx is None:
+        return [ln for ln in lines if ln.strip()], extract_body(normalized)
+
+    header_lines = [ln.strip() for ln in lines[:body_idx] if ln.strip()]
+    body_lines: List[str] = []
+    for line in lines[body_idx + 1:]:
+        stripped = line.strip()
+        if re.match(r"(?i)^load-date:", stripped):
+            break
+        body_lines.append(line)
+
+    body = "\n".join(body_lines).strip()
+    return header_lines, body
+
+
+def detect_date_line(
+    header_lines: List[str],
+    month_translations: Dict[str, str],
+    weekday_names: List[str],
+) -> str:
+    for line in header_lines:
+        if _DATE_LINE_RE.match(line):
+            return line.strip()
+    for line in header_lines:
+        if _HEADER_STOP_RE.match(line):
+            break
+        if line.lower().startswith("load-date:"):
+            continue
+        normalized = cleanup_date_text(line, month_translations, weekday_names)
+        if _DATE_RE.search(normalized):
+            return line.strip()
     return ""
+
+
+def parse_header_metadata(
+    article: str,
+    month_translations: Dict[str, str],
+    weekday_names: List[str],
+) -> Dict[str, object]:
+    header_lines, body = split_header_body(article)
+
+    title = header_lines[0] if header_lines else ""
+    date_line = detect_date_line(header_lines, month_translations, weekday_names)
+    date_norm = cleanup_date_text(date_line, month_translations, weekday_names)
+    date_match = _DATE_RE.search(date_norm)
+    date_str = date_match.group(1).strip() if date_match else ""
+
+    newspaper = ""
+    if date_line and date_line in header_lines:
+        date_idx = header_lines.index(date_line)
+        for cand in reversed(header_lines[:date_idx]):
+            if not cand or cand == title or _HEADER_STOP_RE.match(cand):
+                continue
+            newspaper = cand
+            break
+
+    if not newspaper:
+        for cand in header_lines[1:]:
+            if _HEADER_STOP_RE.match(cand):
+                break
+            normalized = cleanup_date_text(cand, month_translations, weekday_names)
+            if _DATE_RE.search(normalized):
+                continue
+            newspaper = cand
+            break
+
+    section = (_SECTION_RE.search(article).group(1).strip() if _SECTION_RE.search(article) else "")
+    length_m = _LEN_RE.search(article)
+    word_count = int(length_m.group(1)) if length_m else None
+    load_date = (_LOAD_DATE_RE.search(article).group(1).strip() if _LOAD_DATE_RE.search(article) else "")
+
+    return {
+        "title": title,
+        "newspaper": newspaper,
+        "date": date_str,
+        "section": section,
+        "word_count": word_count,
+        "load_date": load_date,
+        "body": body if body else extract_body(article),
+    }
+
+
+def extract_title(article: str) -> str:
+    return str(parse_header_metadata(article, DEFAULT_MONTH_TRANSLATIONS, list(DEFAULT_WEEKDAY_NAMES)).get("title", ""))
 
 
 def extract_date_str(article: str) -> str:
-    m = _DATE_RE.search(article)
-    return m.group(1).strip() if m else ""
+    return str(parse_header_metadata(article, DEFAULT_MONTH_TRANSLATIONS, list(DEFAULT_WEEKDAY_NAMES)).get("date", ""))
 
 
 def extract_newspaper(article: str, date_str: str) -> str:
-    """
-    Best-effort:
-    - Find the line containing the date; newspaper often sits on the previous non-empty line.
-    - Fallback to the 2nd non-empty line.
-    """
-    lines = [ln.rstrip() for ln in article.splitlines()]
-    if date_str:
-        for i, ln in enumerate(lines):
-            if date_str in ln:
-                # previous non-empty line
-                for j in range(i - 1, -1, -1):
-                    cand = lines[j].strip()
-                    if cand:
-                        return cand
-                break
-
-    non_empty = [ln.strip() for ln in lines if ln.strip()]
-    if len(non_empty) >= 2:
-        return non_empty[1]
-    return ""
+    return str(parse_header_metadata(article, DEFAULT_MONTH_TRANSLATIONS, list(DEFAULT_WEEKDAY_NAMES)).get("newspaper", ""))
 
 
 def extract_body(article: str) -> str:
+    article = normalize_article_text(article)
     m = _BODY_RE.search(article)
     if m:
         return m.group(1).strip()
@@ -184,39 +462,36 @@ def extract_body(article: str) -> str:
     return rest.strip()
 
 
-def load_all_rtf_articles(rtf_dir: Path) -> pd.DataFrame:
+def load_all_rtf_articles(
+    rtf_dir: Path,
+    month_translations: Dict[str, str],
+    weekday_names: List[str],
+) -> pd.DataFrame:
     rtf_paths = sorted(rtf_dir.rglob("*.RTF"))
     print(f"[load] Found {len(rtf_paths)} .rtf files under: {rtf_dir}")
 
     rows: List[Dict[str, object]] = []
     for fp in tqdm(rtf_paths, desc="Reading RTFs"):
         rtf_content = read_text_with_fallbacks(fp)
-        plain_text = rtf_to_text(rtf_content)
+        plain_text = normalize_article_text(rtf_to_text(rtf_content))
 
         # Split into Lexis-like article blocks
         articles = [a for a in _END_DOC_SPLIT_RE.split(plain_text) if a and a.strip()]
 
         for art in articles:
-            title = extract_title(art)
-            date_str = extract_date_str(art)
-            newspaper = extract_newspaper(art, date_str)
-            section = (_SECTION_RE.search(art).group(1).strip() if _SECTION_RE.search(art) else "")
-            length_m = _LEN_RE.search(art)
-            word_count = int(length_m.group(1)) if length_m else None
-            load_date = (_LOAD_DATE_RE.search(art).group(1).strip() if _LOAD_DATE_RE.search(art) else "")
-            body = extract_body(art)
+            meta = parse_header_metadata(art, month_translations, weekday_names)
 
             rows.append(
                 {
                     "source_file": fp.name,
                     "source_path": str(fp),
-                    "title": title,
-                    "newspaper": newspaper,
-                    "date": date_str,
-                    "section": section,
-                    "word_count": word_count,
-                    "load_date": load_date,
-                    "body": body,
+                    "title": meta["title"],
+                    "newspaper": meta["newspaper"],
+                    "date": meta["date"],
+                    "section": meta["section"],
+                    "word_count": meta["word_count"],
+                    "load_date": meta["load_date"],
+                    "body": meta["body"],
                 }
             )
 
@@ -230,6 +505,38 @@ def load_all_rtf_articles(rtf_dir: Path) -> pd.DataFrame:
 
 def normalize_key(s: str) -> str:
     return re.sub(r"\s+", " ", str(s).strip().lower())
+
+
+def strip_extraction_artifacts(text: str) -> str:
+    text = str(text or "")
+    text = re.sub(r"(?m)^\s*-\d+\s*", " ", text)
+    text = re.sub(r"\b-?\d+\s+Page of\s+-?\d+\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b-?\d+\b(?=\s+-?\d+\b)", " ", text)
+    text = re.sub(r"\b[0-9A-Fa-f]{32,}\b", " ", text)
+    text = re.sub(r"\\'[0-9a-fA-F]{2}", " ", text)
+    text = re.sub(r"\\\*", " ", text)
+    text = re.sub(r"\bBekijk de oorspronkelijke pagina:.*$", " ", text, flags=re.IGNORECASE | re.MULTILINE)
+    text = re.sub(r"\bGraphic\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def looks_corrupt_article(row: pd.Series) -> bool:
+    title = str(row.get("title", "") or "")
+    newspaper = str(row.get("newspaper", "") or "")
+    body = str(row.get("body", "") or "")
+
+    if not newspaper.strip():
+        return True
+    if not title.strip():
+        return True
+    if title.startswith("Times New Roman"):
+        return True
+    if "Page of" in title:
+        return True
+    if len(re.findall(r"\b[0-9A-Fa-f]{16,}\b", title + " " + body)) > 2:
+        return True
+    return False
 
 
 def add_region_name(df: pd.DataFrame, mapping_csv: Path) -> pd.DataFrame:
@@ -260,7 +567,11 @@ def compute_geo_hits(df: pd.DataFrame, patterns: List[str]) -> pd.Series:
     return df["body"].fillna("").astype(str).map(hits)
 
 
-def clean_articles(df: pd.DataFrame) -> pd.DataFrame:
+def clean_articles(
+    df: pd.DataFrame,
+    month_translations: Dict[str, str],
+    weekday_names: List[str],
+) -> pd.DataFrame:
     df = df.copy()
 
     # Basic sanity: ensure columns exist
@@ -268,8 +579,19 @@ def clean_articles(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
 
-    # Parse dates (Dutch -> English -> datetime)
-    df["date_translated"] = df["date"].fillna("").astype(str).map(translate_dutch_months)
+    for col in ["title", "newspaper", "section", "load_date", "body"]:
+        if col in df.columns:
+            df[col] = df[col].fillna("").astype(str).map(strip_extraction_artifacts)
+
+    corrupt_mask = df.apply(looks_corrupt_article, axis=1)
+    if corrupt_mask.any():
+        print(f"[clean] Dropping likely corrupt article blocks: {int(corrupt_mask.sum())}")
+        df = df.loc[~corrupt_mask].copy()
+
+    # Parse dates via structure-driven extraction + month-name normalization
+    df["date_translated"] = df["date"].fillna("").astype(str).map(
+        lambda x: cleanup_date_text(x, month_translations, weekday_names)
+    )
     df["date_parsed"] = pd.to_datetime(df["date_translated"], errors="coerce", dayfirst=True)
 
     # Drop rows with no body
@@ -389,6 +711,7 @@ def make_paragraph_uid(source: str, title: str, publish_date: str, paragraph_id:
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(PROJECT_DIR))
+    ap.add_argument("--config", type=str, default=str(DEFAULT_CONFIG_PATH))
     ap.add_argument("--input-rtf-dir", type=str, default=str(INPUT_RTF_DIR))
     ap.add_argument("--newspaper-region-csv", type=str, default=str(NEWSPAPER_REGION_CSV))
     ap.add_argument("--output-paragraph-csv", type=str, default=str(OUTPUT_PARAGRAPH_CSV))
@@ -402,6 +725,7 @@ def main() -> None:
     args = parse_args()
 
     project_dir = Path(args.project_dir).expanduser().resolve()
+    config_path = Path(args.config).expanduser().resolve()
     input_rtf_dir = Path(args.input_rtf_dir).expanduser().resolve()
     newspaper_region_csv = Path(args.newspaper_region_csv).expanduser().resolve()
     output_paragraph_csv = Path(args.output_paragraph_csv).expanduser().resolve()
@@ -410,12 +734,13 @@ def main() -> None:
 
     os.chdir(project_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    month_translations, weekday_names = load_preprocessing_config(config_path)
 
     if not input_rtf_dir.exists():
         raise FileNotFoundError(f"INPUT_RTF_DIR does not exist: {input_rtf_dir}")
 
     # 1) Load raw articles
-    df_raw = load_all_rtf_articles(input_rtf_dir)
+    df_raw = load_all_rtf_articles(input_rtf_dir, month_translations, weekday_names)
     print(f"[main] Loaded {len(df_raw)} raw article blocks (after splitting)")
 
     if df_raw.empty:
@@ -428,7 +753,7 @@ def main() -> None:
     print(f"[main] Raw empty-body rate: {raw_empty_body:.1%}")
 
     # 2) Clean
-    df = clean_articles(df_raw)
+    df = clean_articles(df_raw, month_translations, weekday_names)
     print(f"[main] Articles after cleaning: {len(df)}")
 
     # 3) Region mapping

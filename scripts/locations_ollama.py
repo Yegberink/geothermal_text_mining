@@ -26,9 +26,11 @@ SYSTEM = (
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
-def _fingerprint(text: str, region: str) -> str:
+def _fingerprint(text: str, region: str, country: str) -> str:
     h = hashlib.sha256()
     h.update((region or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((country or "").encode("utf-8"))
     h.update(b"\n")
     h.update((text or "").encode("utf-8"))
     return h.hexdigest()
@@ -49,18 +51,26 @@ def make_uid(row: Dict[str, object]) -> str:
     wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception_type((requests.Timeout, requests.ConnectionError, requests.HTTPError)),
 )
-def llm_primary_location(text: str, newspaper_region_name: str, ollama_url: str, model: str) -> dict:
+def llm_primary_location(
+    text: str,
+    newspaper_region_name: str,
+    country: str,
+    ollama_url: str,
+    model: str,
+) -> dict:
     prompt = f"""
 Task: Determine the ONE primary geographic location this paragraph is mainly about.
 
 Context:
 - The newspaper's coverage region is: {newspaper_region_name}
 - The paragraph is about geothermal energy.
+- Primary country of interest: {country}
 
 Rules:
 - Return exactly ONE location name, or "NONE" if no clear primary location.
 - Prefer the most specific location that is clearly the focus (site/city/municipality).
-- If the paragraph is general or national-level, return "Nederland".
+- If the paragraph is general or national-level, return "{country}".
+- If no subnational location is stated but the paragraph clearly refers to the country as a whole, return "{country}".
 - Do NOT list multiple places.
 - Output MUST be valid JSON only, with keys:
   location, granularity, confidence, reasoning_short
@@ -116,6 +126,7 @@ def batch_primary_locations_resumable(
     sleep_s: float,
     ollama_url: str,
     model: str,
+    country: str,
     partial_csv_path: Optional[Path],
 ) -> pd.DataFrame:
     if checkpoint_path.exists():
@@ -160,6 +171,10 @@ def batch_primary_locations_resumable(
         st = row.get("llm_status")
         return st in ("ok", "empty")
 
+    out = out.copy()
+    if "llm_is_geothermal" in out.columns:
+        out = out[out["llm_is_geothermal"].astype(str).str.upper() == "YES"].copy()
+
     todo_idx = [i for i, r in out.iterrows() if not is_done(r)]
     pbar = tqdm(todo_idx, desc="Geothermal location extraction", unit="row")
 
@@ -171,7 +186,7 @@ def batch_primary_locations_resumable(
     try:
         for i in pbar:
             text = str(out.at[i, text_col] if text_col in out.columns else "") or ""
-            region_name = str(out.at[i, region_col] if region_col in out.columns else "Nederland") or "Nederland"
+            region_name = str(out.at[i, region_col] if region_col in out.columns else country) or country
 
             if not text.strip():
                 out.at[i, "llm_status"] = "empty"
@@ -182,13 +197,14 @@ def batch_primary_locations_resumable(
                 processed_since_save += 1
                 continue
 
-            key = _fingerprint(text, region_name)
+            key = _fingerprint(text, region_name, country)
             cached = cache_get(key)
 
             try:
                 res = cached if cached is not None else llm_primary_location(
                     text=text,
                     newspaper_region_name=region_name,
+                    country=country,
                     ollama_url=ollama_url,
                     model=model,
                 )
@@ -234,7 +250,7 @@ def batch_primary_locations_resumable(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/newspapers_cleaned_paragraphs.csv")
+    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_geothermal_ollama.csv")
     ap.add_argument("--out-csv", type=str, default="output/text/paragraph_locations_ollama.csv")
 
     ap.add_argument("--text-col", type=str, default="paragraph_text")
@@ -249,6 +265,7 @@ def main():
 
     ap.add_argument("--ollama-url", type=str, default="http://localhost:11434/api/generate")
     ap.add_argument("--model", type=str, default="llama3.1:8b")
+    ap.add_argument("--country", type=str, default="Nederland")
 
     args = ap.parse_args()
 
@@ -281,6 +298,7 @@ def main():
         sleep_s=args.sleep_s,
         ollama_url=args.ollama_url,
         model=args.model,
+        country=args.country,
         partial_csv_path=Path(args.partial_csv) if args.partial_csv else None,
     )
 

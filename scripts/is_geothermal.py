@@ -26,9 +26,11 @@ SYSTEM = (
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
-def _fingerprint(text: str, region: str) -> str:
+def _fingerprint(text: str, region: str, country: str) -> str:
     h = hashlib.sha256()
     h.update((region or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((country or "").encode("utf-8"))
     h.update(b"\n")
     h.update((text or "").encode("utf-8"))
     return h.hexdigest()
@@ -49,12 +51,19 @@ def make_uid(row: Dict[str, object]) -> str:
     wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception_type((requests.Timeout, requests.ConnectionError, requests.HTTPError)),
 )
-def llm_is_geothermal(text: str, newspaper_region_name: str, ollama_url: str, model: str) -> dict:
+def llm_is_geothermal(
+    text: str,
+    newspaper_region_name: str,
+    country: str,
+    ollama_url: str,
+    model: str,
+) -> dict:
     prompt = f"""
 Task: Decide whether this paragraph is MAINLY about geothermal energy.
 
 Context:
 - Newspaper coverage region: {newspaper_region_name}
+- Main country of interest: {country}
 
 Definitions:
 - "Geothermal energy" includes: geothermal heat, deep geothermal, geothermal wells, doublets,
@@ -120,6 +129,7 @@ def batch_geothermal_resumable(
     sleep_s: float,
     ollama_url: str,
     model: str,
+    country: str,
     partial_csv_path: Optional[Path],
 ) -> pd.DataFrame:
     if checkpoint_path.exists():
@@ -173,7 +183,7 @@ def batch_geothermal_resumable(
     try:
         for i in pbar:
             text = str(out.at[i, text_col] if text_col in out.columns else "") or ""
-            region_name = str(out.at[i, region_col] if region_col in out.columns else "Nederland") or "Nederland"
+            region_name = str(out.at[i, region_col] if region_col in out.columns else country) or country
 
             if not text.strip():
                 out.at[i, "llm_status"] = "empty"
@@ -183,13 +193,14 @@ def batch_geothermal_resumable(
                 processed_since_save += 1
                 continue
 
-            key = _fingerprint(text, region_name)
+            key = _fingerprint(text, region_name, country)
             cached = cache_get(key)
 
             try:
                 res = cached if cached is not None else llm_is_geothermal(
                     text=text,
                     newspaper_region_name=region_name,
+                    country=country,
                     ollama_url=ollama_url,
                     model=model,
                 )
@@ -234,7 +245,7 @@ def batch_geothermal_resumable(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_locations_ollama.csv")
+    ap.add_argument("--input-csv", type=str, default="output/text/newspapers_cleaned_paragraphs.csv")
     ap.add_argument("--out-csv", type=str, default="output/text/paragraph_geothermal_ollama.csv")
 
     ap.add_argument("--text-col", type=str, default="paragraph_text")
@@ -249,6 +260,7 @@ def main():
 
     ap.add_argument("--ollama-url", type=str, default="http://localhost:11434/api/generate")
     ap.add_argument("--model", type=str, default="llama3.1:8b")
+    ap.add_argument("--country", type=str, default="Nederland")
 
     args = ap.parse_args()
 
@@ -278,6 +290,7 @@ def main():
         sleep_s=args.sleep_s,
         ollama_url=args.ollama_url,
         model=args.model,
+        country=args.country,
         partial_csv_path=Path(args.partial_csv) if args.partial_csv else None,
     )
 
