@@ -1,6 +1,6 @@
 python: python
-language: dutch
-country: Netherlands
+language: italian
+country: Italy
 
 preprocessing:
   date_locale:
