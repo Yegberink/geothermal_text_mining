@@ -26,6 +26,7 @@ SYSTEM = (
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
+
 def _fingerprint(text: str, region: str, country: str) -> str:
     h = hashlib.sha256()
     h.update((region or "").encode("utf-8"))
@@ -34,6 +35,7 @@ def _fingerprint(text: str, region: str, country: str) -> str:
     h.update(b"\n")
     h.update((text or "").encode("utf-8"))
     return h.hexdigest()
+
 
 def make_uid(row: Dict[str, object]) -> str:
     base = "||".join([
@@ -44,6 +46,7 @@ def make_uid(row: Dict[str, object]) -> str:
         str(row.get("paragraph_text", "")),
     ])
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
 
 @retry(
     reraise=True,
@@ -97,12 +100,22 @@ Paragraph:
     start = out.find("{")
     end = out.rfind("}")
     if start == -1 or end == -1:
-        return {"location": "NONE", "granularity": "none", "confidence": 0.0, "reasoning_short": "No JSON returned."}
+        return {
+            "location": "NONE",
+            "granularity": "none",
+            "confidence": 0.0,
+            "reasoning_short": "No JSON returned.",
+        }
 
     try:
         obj = json.loads(out[start:end + 1])
     except json.JSONDecodeError:
-        return {"location": "NONE", "granularity": "none", "confidence": 0.0, "reasoning_short": "Invalid JSON."}
+        return {
+            "location": "NONE",
+            "granularity": "none",
+            "confidence": 0.0,
+            "reasoning_short": "Invalid JSON.",
+        }
 
     loc = obj.get("location", "NONE") or "NONE"
     gran = obj.get("granularity", "none") or "none"
@@ -114,7 +127,20 @@ Paragraph:
     conf = max(0.0, min(1.0, conf))
 
     reason = obj.get("reasoning_short", "") or ""
-    return {"location": loc, "granularity": gran, "confidence": conf, "reasoning_short": reason}
+    return {
+        "location": loc,
+        "granularity": gran,
+        "confidence": conf,
+        "reasoning_short": reason,
+    }
+
+
+def save_checkpoint(out: pd.DataFrame, checkpoint_path: Path) -> None:
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = checkpoint_path.with_suffix(checkpoint_path.suffix + ".tmp")
+    out.to_parquet(tmp_path, index=True)
+    tmp_path.replace(checkpoint_path)
+
 
 def batch_primary_locations_resumable(
     df: pd.DataFrame,
@@ -131,7 +157,13 @@ def batch_primary_locations_resumable(
 ) -> pd.DataFrame:
     if checkpoint_path.exists():
         out = pd.read_parquet(checkpoint_path)
+
+        # Defensive handling for older or differently written checkpoints.
+        if "uid" in out.columns and out.index.name != "uid":
+            out = out.set_index("uid", drop=True)
+
         out = out.reindex(df.index)
+
         for c in df.columns:
             if c not in out.columns:
                 out[c] = df[c]
@@ -180,7 +212,6 @@ def batch_primary_locations_resumable(
 
     ok = int((out.get("llm_status") == "ok").sum()) if "llm_status" in out.columns else 0
     err = int((out.get("llm_status") == "error").sum()) if "llm_status" in out.columns else 0
-
     processed_since_save = 0
 
     try:
@@ -194,6 +225,7 @@ def batch_primary_locations_resumable(
                 out.at[i, "llm_granularity"] = "none"
                 out.at[i, "llm_confidence"] = 0.0
                 out.at[i, "llm_reasoning_short"] = "Empty paragraph."
+                out.at[i, "llm_error"] = None
                 processed_since_save += 1
                 continue
 
@@ -230,13 +262,16 @@ def batch_primary_locations_resumable(
                 time.sleep(sleep_s)
 
             if processed_since_save >= save_every:
-                out.to_parquet(checkpoint_path, index=True)
+                save_checkpoint(out, checkpoint_path)
                 processed_since_save = 0
 
     except KeyboardInterrupt:
-        out.to_parquet(checkpoint_path, index=True)
+        save_checkpoint(out, checkpoint_path)
         if partial_csv_path is not None:
-            out.to_csv(partial_csv_path, index=False, encoding="utf-8")
+            partial_csv_path.parent.mkdir(parents=True, exist_ok=True)
+            partial_out = out.copy()
+            partial_out["uid"] = partial_out.index
+            partial_out.to_csv(partial_csv_path, index=False, encoding="utf-8")
         print(
             f"\nStopped by user. Progress saved to:\n"
             f"- {checkpoint_path}\n"
@@ -244,8 +279,9 @@ def batch_primary_locations_resumable(
         )
         return out
 
-    out.to_parquet(checkpoint_path, index=True)
+    save_checkpoint(out, checkpoint_path)
     return out
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -275,14 +311,14 @@ def main():
     df = pd.read_csv(args.input_csv, encoding="utf-8")
     if "uid" not in df.columns:
         df["uid"] = df.apply(lambda r: make_uid(r.to_dict()), axis=1)
-    df = df.set_index("uid", drop=False)
 
-    df['word_count'] = df['paragraph_text'].apply(lambda x: len(str(x).split()))
+    # Important fix:
+    # keep uid only as index, not both index and column.
+    df = df.set_index("uid", drop=True)
 
-    #filter to paragraphs with at least 20 words and fewer than 500 words
+    df["word_count"] = df[args.text_col].apply(lambda x: len(str(x).split()))
+    df = df[(df["word_count"] >= 20) & (df["word_count"] < 500)].copy()
 
-    df = df[(df['word_count'] >= 20) & (df['word_count'] < 500)].copy()
-    
     checkpoint_path = Path(args.checkpoint)
     cache_path = Path(args.cache)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -303,8 +339,14 @@ def main():
     )
 
     Path(args.out_csv).parent.mkdir(parents=True, exist_ok=True)
+
+    # Restore uid as a regular column for the final CSV export.
+    out = out.copy()
+    out["uid"] = out.index
+
     out.to_csv(args.out_csv, index=False, encoding="utf-8")
     print(f"Wrote: {args.out_csv}  (rows={len(out)})")
+
 
 if __name__ == "__main__":
     main()
