@@ -1,6 +1,6 @@
 python: python
-language: italian
-country: Italy
+language: dutch
+country: Netherlands
 
 preprocessing:
   date_locale:
@@ -64,6 +64,18 @@ ollama:
   save_every: 25
   sleep_s: 0.0
 
+online_geocoding:
+  country_codes: nl,be,bq,aw,cw,sx
+  user_agent: absa-geo-mapper
+  save_every: 50
+  print_every: 25
+  min_delay_seconds: 1.1
+  timeout_seconds: 10
+  max_retries: 6
+  backoff_base: 1.6
+  jitter: 0.25
+  max_queries: 0
+
 layers:
   municipality: gemeente_gegeneraliseerd
   province: provincie_gegeneraliseerd
@@ -79,8 +91,10 @@ paths:
   paragraph_locations_csv: output/text/paragraph_locations_ollama.csv
   paragraph_geothermal_csv: output/text/paragraph_geothermal_ollama.csv
   sentences_with_absa_csv: output/text/sentences_with_absa_v2.csv
+  sentences_with_absa_and_geo_offline_gpkg: output/text/sentences_with_absa_and_geo_offline_v2.gpkg
   sentences_with_absa_and_geo_gpkg: output/text/sentences_with_absa_and_geo_v2.gpkg
   sentence_offline_geocoding_csv: output/text/sentence_offline_geocoding.csv
+  nominatim_cache_json: cache/nominatim_cache.json
   sentences_with_categories_gpkg: output/text/sentences_with_categories.gpkg
   sentences_with_categories_long_csv: output/text/sentences_with_categories_long.csv
   sentences_with_categories_short_csv: output/text/sentences_with_categories_short.csv

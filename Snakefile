@@ -5,6 +5,7 @@ configfile: "config/config.yaml"
 PROJECT_DIR = Path(workflow.basedir).resolve()
 PYTHON = config.get("python", "python")
 OLLAMA = config["ollama"]
+ONLINE_GEOCODING = config.get("online_geocoding", {})
 PATHS = config["paths"]
 LANGUAGE = config.get("language")
 LAYERS = config["layers"]
@@ -20,6 +21,8 @@ def _local_path(path_str):
             return str(Path("cache") / LANGUAGE / Path(*path.parts[1:]))
         if path.parts[0] == "input_data":
             return str(Path("input_data") / LANGUAGE / Path(*path.parts[1:]))
+        if path.parts[0] == "vocab":
+            return str(Path("vocab") / LANGUAGE / Path(*path.parts[1:]))
     return str(path)
 
 
@@ -131,7 +134,7 @@ rule geocode_sentences_offline:
         csv=PATHS["sentences_with_absa_csv"],
         cbs=PATHS["cbs_gpkg"],
     output:
-        gpkg=PATHS["sentences_with_absa_and_geo_gpkg"],
+        gpkg=PATHS["sentences_with_absa_and_geo_offline_gpkg"],
         csv=PATHS["sentence_offline_geocoding_csv"],
     params:
         layer_muni=LAYERS["municipality"],
@@ -146,6 +149,50 @@ rule geocode_sentences_offline:
           --layer-prov {params.layer_prov} \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv}
+        """
+
+
+rule geocode_sentences_online:
+    input:
+        csv=PATHS["sentence_offline_geocoding_csv"],
+        cbs=PATHS["cbs_gpkg"],
+    output:
+        gpkg=PATHS["sentences_with_absa_and_geo_gpkg"],
+    params:
+        layer_muni=LAYERS["municipality"],
+        layer_prov=LAYERS["province"],
+        cache=PATHS["nominatim_cache_json"],
+        country_codes=ONLINE_GEOCODING.get("country_codes", ""),
+        user_agent=ONLINE_GEOCODING.get("user_agent", "absa-geo-mapper"),
+        save_every=ONLINE_GEOCODING.get("save_every", 50),
+        print_every=ONLINE_GEOCODING.get("print_every", 25),
+        min_delay_seconds=ONLINE_GEOCODING.get("min_delay_seconds", 1.1),
+        timeout_seconds=ONLINE_GEOCODING.get("timeout_seconds", 10),
+        max_retries=ONLINE_GEOCODING.get("max_retries", 6),
+        backoff_base=ONLINE_GEOCODING.get("backoff_base", 1.6),
+        jitter=ONLINE_GEOCODING.get("jitter", 0.25),
+        max_queries=ONLINE_GEOCODING.get("max_queries", 0),
+    shell:
+        """
+        {PYTHON} scripts/geocoding_online.py \
+          --project-dir {PROJECT_DIR} \
+          --input-csv {input.csv} \
+          --cbs-gpkg {input.cbs} \
+          --layer-muni {params.layer_muni} \
+          --layer-prov {params.layer_prov} \
+          --output-gpkg {output.gpkg} \
+          --cache-path {params.cache} \
+          --country "{COUNTRY}" \
+          --country-codes "{params.country_codes}" \
+          --user-agent {params.user_agent} \
+          --save-every {params.save_every} \
+          --print-every {params.print_every} \
+          --min-delay-seconds {params.min_delay_seconds} \
+          --timeout-seconds {params.timeout_seconds} \
+          --max-retries {params.max_retries} \
+          --backoff-base {params.backoff_base} \
+          --jitter {params.jitter} \
+          --max-queries {params.max_queries}
         """
 
 
