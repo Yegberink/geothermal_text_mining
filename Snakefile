@@ -34,6 +34,10 @@ rule all:
     input:
         PATHS["sentences_with_categories_admin_csv"],
         PATHS["sentences_with_categories_admin_gpkg"],
+        PATHS["province_sentiment_table_csv"],
+        PATHS["provinces_sentiment_balance_png"],
+        PATHS["provinces_sentiment_distribution_png"],
+        PATHS["categories_sentiment_distribution_png"],
 
 
 rule preprocess_rtf_to_paragraphs:
@@ -236,4 +240,25 @@ rule aggregate_to_admin_areas:
           --layer-provincie {params.layer_prov} \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv}
+        """
+
+
+rule visualize_absa_results:
+    input:
+        admin_csv=PATHS["sentences_with_categories_admin_csv"],
+        categories_csv=PATHS["sentences_with_categories_short_csv"],
+    output:
+        table=PATHS["province_sentiment_table_csv"],
+        balance=PATHS["provinces_sentiment_balance_png"],
+        distribution=PATHS["provinces_sentiment_distribution_png"],
+        categories=PATHS["categories_sentiment_distribution_png"],
+    params:
+        output_dir=PATHS["figures_dir"],
+    shell:
+        """
+        {PYTHON} scripts/visualize_absa_results.py \
+          --project-dir {PROJECT_DIR} \
+          --admin-csv {input.admin_csv} \
+          --categories-csv {input.categories_csv} \
+          --output-dir {params.output_dir}
         """
