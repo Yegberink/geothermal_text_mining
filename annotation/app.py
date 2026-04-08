@@ -156,10 +156,13 @@ def seed_tasks_if_empty(df: pd.DataFrame):
     Seeds tasks once.
 
     Important:
-    - Uses sentence_uid as the unique task key
+    - Uses a text-unit uid column as the unique task key
     - Stores it in the DB column called sentence_id for compatibility
     """
-    required = {"sentence_uid", "sentence_text", "aspect", "sentiment"}
+    uid_col = "sentence_uid" if "sentence_uid" in df.columns else ("uid" if "uid" in df.columns else None)
+    text_col = "sentence_text" if "sentence_text" in df.columns else ("paragraph_text" if "paragraph_text" in df.columns else None)
+    required = {uid_col, text_col, "sentiment"}
+    required.discard(None)
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns in CSV: {sorted(missing)}")
@@ -170,13 +173,13 @@ def seed_tasks_if_empty(df: pd.DataFrame):
             return
 
         for _, r in df.iterrows():
-            sid = r["sentence_uid"]  # unique key
+            sid = r[uid_col]
             bucket = stable_bucket(sid)
 
             meta = {
                 k: (None if pd.isna(r[k]) else r[k])
                 for k in df.columns
-                if k not in ["sentence_uid", "sentence_text", "aspect", "sentiment"]
+                if k not in [uid_col, text_col, "aspect", "sentiment"]
             }
 
             conn.execute(
@@ -190,8 +193,8 @@ def seed_tasks_if_empty(df: pd.DataFrame):
                 """),
                 dict(
                     sentence_id=str(sid),
-                    sentence_text=str(r["sentence_text"]),
-                    aspect_pred=None if pd.isna(r["aspect"]) else str(r["aspect"]),
+                    sentence_text=str(r[text_col]),
+                    aspect_pred=None if "aspect" not in df.columns or pd.isna(r.get("aspect")) else str(r["aspect"]),
                     sentiment_pred=None if pd.isna(r["sentiment"]) else str(r["sentiment"]),
                     split_bucket=int(bucket),
                     meta_json=json.dumps(meta, ensure_ascii=False),
@@ -338,7 +341,7 @@ if "sentence_id" not in st.session_state or st.session_state.sentence_id is None
 
 sentence_id = st.session_state.sentence_id
 if sentence_id is None:
-    st.success("You’re done — no remaining sentences assigned to you.")
+    st.success("You’re done — no remaining text units assigned to you.")
     st.stop()
 
 row = load_task(sentence_id)
@@ -357,14 +360,15 @@ has_matched_category = len(matched_categories) > 0
 left, right = st.columns([3, 2], gap="large")
 
 with left:
-    st.subheader(f"Sentence UID: {sid}")
+    st.subheader(f"Text UID: {sid}")
     if display_sentence_id is not None:
-        st.caption(f"Original sentence_id: {display_sentence_id}")
+        st.caption(f"Original row id: {display_sentence_id}")
 
     st.write(sentence_text)
 
     st.markdown("### Model output")
-    st.markdown(f"- **Aspect (pred):** {aspect_pred}")
+    if aspect_pred:
+        st.markdown(f"- **Aspect (pred):** {aspect_pred}")
     st.markdown(f"- **Sentiment (pred):** {sentiment_pred}")
     st.markdown(
         f"- **Split bucket:** {split_bucket} " + ("(overlap)" if split_bucket in OVERLAP_BUCKETS else "")
@@ -390,7 +394,7 @@ with left:
         if meta:
             st.json(meta)
         else:
-            st.caption("No metadata stored for this sentence.")
+            st.caption("No metadata stored for this text unit.")
 
 with right:
     st.subheader("Your evaluation")

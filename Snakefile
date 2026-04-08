@@ -36,8 +36,8 @@ if LANGUAGE:
 
 
 ALL_TARGETS = [
-    PATHS["sentences_with_categories_admin_csv"],
-    PATHS["sentences_with_categories_admin_gpkg"],
+    PATHS["paragraphs_with_categories_admin_csv"],
+    PATHS["paragraphs_with_categories_admin_gpkg"],
     PATHS["province_sentiment_table_csv"],
     PATHS["provinces_sentiment_balance_png"],
     PATHS["provinces_sentiment_distribution_png"],
@@ -131,28 +131,44 @@ rule extract_locations:
         """
 
 
-rule run_absa:
+rule classify_paragraph_sentiment:
     input:
         PATHS["paragraph_locations_csv"],
     output:
-        PATHS["sentences_with_absa_csv"],
+        PATHS["paragraph_sentiment_csv"],
+    params:
+        checkpoint=PATHS["sentiment_checkpoint"],
+        cache=PATHS["sentiment_cache"],
+        partial=PATHS["sentiment_partial_csv"],
+        model=OLLAMA["sentiment_model"],
+        url=OLLAMA["url"],
+        sleep_s=OLLAMA["sleep_s"],
+        save_every=OLLAMA["save_every"],
     shell:
         """
         {PYTHON} scripts/ABSA.py \
           --project-dir {PROJECT_DIR} \
           --input-csv {input} \
-          --output-csv {output}
+          --output-csv {output} \
+          --checkpoint {params.checkpoint} \
+          --cache {params.cache} \
+          --partial-csv {params.partial} \
+          --ollama-url {params.url} \
+          --model {params.model} \
+          --country {COUNTRY} \
+          --sleep-s {params.sleep_s} \
+          --save-every {params.save_every}
         """
 
 
-rule geocode_sentences_offline:
+rule geocode_paragraphs_offline:
     input:
-        csv=PATHS["sentences_with_absa_csv"],
+        csv=PATHS["paragraph_sentiment_csv"],
         muni=PATHS["municipality_gpkg"],
         prov=PATHS["province_gpkg"],
     output:
-        gpkg=PATHS["sentences_with_absa_and_geo_offline_gpkg"],
-        csv=PATHS["sentence_offline_geocoding_csv"],
+        gpkg=PATHS["paragraphs_with_geo_offline_gpkg"],
+        csv=PATHS["paragraph_offline_geocoding_csv"],
     shell:
         """
         {PYTHON} scripts/geocoding_offline.py \
@@ -165,13 +181,13 @@ rule geocode_sentences_offline:
         """
 
 
-rule geocode_sentences_online:
+rule geocode_paragraphs_online:
     input:
-        csv=PATHS["sentence_offline_geocoding_csv"],
+        csv=PATHS["paragraph_offline_geocoding_csv"],
         muni=PATHS["municipality_gpkg"],
         prov=PATHS["province_gpkg"],
     output:
-        gpkg=PATHS["sentences_with_absa_and_geo_gpkg"],
+        gpkg=PATHS["paragraphs_with_geo_gpkg"],
     params:
         cache=PATHS["nominatim_cache_json"],
         country_codes=ONLINE_GEOCODING.get("country_codes", ""),
@@ -207,14 +223,14 @@ rule geocode_sentences_online:
         """
 
 
-rule classify_sentence_categories:
+rule classify_paragraph_categories:
     input:
-        gpkg=PATHS["sentences_with_absa_and_geo_gpkg"],
+        gpkg=PATHS["paragraphs_with_geo_gpkg"],
         keywords=PATHS["keywords_topics_csv"],
     output:
-        gpkg=PATHS["sentences_with_categories_gpkg"],
-        long_csv=PATHS["sentences_with_categories_long_csv"],
-        short_csv=PATHS["sentences_with_categories_short_csv"],
+        gpkg=PATHS["paragraphs_with_categories_gpkg"],
+        long_csv=PATHS["paragraphs_with_categories_long_csv"],
+        short_csv=PATHS["paragraphs_with_categories_short_csv"],
     shell:
         """
         {PYTHON} scripts/classification_sentences.py \
@@ -229,12 +245,12 @@ rule classify_sentence_categories:
 
 rule aggregate_to_admin_areas:
     input:
-        gpkg=PATHS["sentences_with_categories_gpkg"],
+        gpkg=PATHS["paragraphs_with_categories_gpkg"],
         muni=PATHS["municipality_gpkg"],
         prov=PATHS["province_gpkg"],
     output:
-        gpkg=PATHS["sentences_with_categories_admin_gpkg"],
-        csv=PATHS["sentences_with_categories_admin_csv"],
+        gpkg=PATHS["paragraphs_with_categories_admin_gpkg"],
+        csv=PATHS["paragraphs_with_categories_admin_csv"],
     shell:
         """
         {PYTHON} scripts/geographic_aggregation.py \
@@ -249,8 +265,8 @@ rule aggregate_to_admin_areas:
 
 rule visualize_absa_results:
     input:
-        admin_csv=PATHS["sentences_with_categories_admin_csv"],
-        categories_csv=PATHS["sentences_with_categories_short_csv"],
+        admin_csv=PATHS["paragraphs_with_categories_admin_csv"],
+        categories_csv=PATHS["paragraphs_with_categories_short_csv"],
     output:
         table=PATHS["province_sentiment_table_csv"],
         balance=PATHS["provinces_sentiment_balance_png"],
@@ -270,7 +286,7 @@ rule visualize_absa_results:
 
 rule make_annotation_df:
     input:
-        admin_csv=PATHS["sentences_with_categories_admin_csv"],
+        admin_csv=PATHS["paragraphs_with_categories_admin_csv"],
     output:
         PATHS["annotation_sentences_csv"],
     params:

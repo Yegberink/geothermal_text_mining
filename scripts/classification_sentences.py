@@ -12,12 +12,12 @@ DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-gpkg", type=str, default="output/text/sentences_with_absa_and_geo_v2.gpkg")
+    ap.add_argument("--input-gpkg", type=str, default="output/text/paragraphs_with_geo.gpkg")
     ap.add_argument("--keywords-csv", type=str, default="vocab/keywords_topics.csv")
-    ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_categories.gpkg")
-    ap.add_argument("--output-layer", type=str, default="sentences_with_categories")
-    ap.add_argument("--output-long-csv", type=str, default="output/text/sentences_with_categories_long.csv")
-    ap.add_argument("--output-short-csv", type=str, default="output/text/sentences_with_categories_short.csv")
+    ap.add_argument("--output-gpkg", type=str, default="output/text/paragraphs_with_categories.gpkg")
+    ap.add_argument("--output-layer", type=str, default="paragraphs_with_categories")
+    ap.add_argument("--output-long-csv", type=str, default="output/text/paragraphs_with_categories_long.csv")
+    ap.add_argument("--output-short-csv", type=str, default="output/text/paragraphs_with_categories_short.csv")
     return ap.parse_args()
 
 
@@ -46,13 +46,13 @@ def main():
     output_long_csv.parent.mkdir(parents=True, exist_ok=True)
     output_short_csv.parent.mkdir(parents=True, exist_ok=True)
 
-    points_gdf = gpd.read_file(args.input_gpkg, layer="sentences_points")
-    polys_gdf = gpd.read_file(args.input_gpkg, layer="sentences_polygons")
-    points_gdf["source_layer"] = "sentences_points"
-    polys_gdf["source_layer"] = "sentences_polygons"
+    points_gdf = gpd.read_file(args.input_gpkg, layer="paragraphs_points")
+    polys_gdf = gpd.read_file(args.input_gpkg, layer="paragraphs_polygons")
+    points_gdf["source_layer"] = "paragraphs_points"
+    polys_gdf["source_layer"] = "paragraphs_polygons"
 
-    sentences_gdf = pd.concat([points_gdf, polys_gdf], ignore_index=True)
-    sentences_gdf = gpd.GeoDataFrame(sentences_gdf, geometry="geometry", crs=points_gdf.crs)
+    text_gdf = pd.concat([points_gdf, polys_gdf], ignore_index=True)
+    text_gdf = gpd.GeoDataFrame(text_gdf, geometry="geometry", crs=points_gdf.crs)
 
     keyword_categories = pd.read_csv(args.keywords_csv)
     keyword_categories = keyword_categories.loc[
@@ -63,7 +63,9 @@ def main():
     duplicates = all_keywords[all_keywords.duplicated()]
     print(duplicates)
 
-    text = sentences_gdf["sentence_text"].astype(str).str.lower()
+    text_col = "paragraph_text" if "paragraph_text" in text_gdf.columns else "sentence_text"
+    uid_col = "uid" if "uid" in text_gdf.columns else "sentence_uid"
+    text = text_gdf[text_col].astype(str).str.lower()
 
     cat2keywords = {}
     for col in keyword_categories.columns:
@@ -104,51 +106,45 @@ def main():
         return categories, hits
 
     res = text.apply(get_category_hits)
-    sentences_gdf["matched_categories"] = res.apply(lambda x: x[0])
-    sentences_gdf["matched_keywords"] = res.apply(lambda x: x[1])
-    sentences_gdf["n_categories"] = sentences_gdf["matched_categories"].str.len()
-    sentences_gdf["matched_categories_str"] = sentences_gdf["matched_categories"].apply(
+    text_gdf["matched_categories"] = res.apply(lambda x: x[0])
+    text_gdf["matched_keywords"] = res.apply(lambda x: x[1])
+    text_gdf["n_categories"] = text_gdf["matched_categories"].str.len()
+    text_gdf["matched_categories_str"] = text_gdf["matched_categories"].apply(
         lambda lst: ";".join(lst) if lst else None
     )
-    sentences_gdf["matched_keywords_str"] = sentences_gdf["matched_keywords"].apply(
+    text_gdf["matched_keywords_str"] = text_gdf["matched_keywords"].apply(
         hits_to_keywords_only_str
     )
-    sentences_gdf = sentences_gdf.drop(columns=["matched_categories", "matched_keywords"])
+    text_gdf = text_gdf.drop(columns=["matched_categories", "matched_keywords"])
 
-    sentences_gdf["sentence_text_norm"] = (
-        sentences_gdf["sentence_text"].astype(str).str.strip().str.lower()
-    )
-    majority_sentiment = (
-        sentences_gdf.groupby("sentence_text_norm")["sentiment"]
-        .agg(lambda x: x.value_counts().idxmax())
-    )
-    sentences_gdf["geom_priority"] = sentences_gdf["source_layer"].map({
-        "sentences_polygons": 1,
-        "sentences_points": 2,
+    text_gdf["_text_norm"] = text_gdf[text_col].astype(str).str.strip().str.lower()
+    text_gdf["geom_priority"] = text_gdf["source_layer"].map({
+        "paragraphs_polygons": 1,
+        "paragraphs_points": 2,
     })
 
-    sentences_unique = (
-        sentences_gdf.sort_values(["sentence_text_norm", "geom_priority"])
-        .drop_duplicates(subset=["sentence_text_norm"], keep="first")
+    dedupe_col = uid_col if uid_col in text_gdf.columns else "_text_norm"
+    text_unique = (
+        text_gdf.sort_values([dedupe_col, "geom_priority"])
+        .drop_duplicates(subset=[dedupe_col], keep="first")
         .copy()
     )
-    sentences_unique["sentiment"] = sentences_unique["sentence_text_norm"].map(majority_sentiment)
-    sentences_unique = sentences_unique.drop(columns=["sentence_text_norm", "geom_priority"])
-    sentences_unique = gpd.GeoDataFrame(
-        sentences_unique,
+    text_unique = text_unique.drop(columns=["_text_norm", "geom_priority"])
+    text_unique = gpd.GeoDataFrame(
+        text_unique,
         geometry="geometry",
-        crs=sentences_gdf.crs,
+        crs=text_gdf.crs,
     )
 
-    sentences_unique.to_file(output_gpkg, layer=args.output_layer, driver="GPKG")
+    text_unique.to_file(output_gpkg, layer=args.output_layer, driver="GPKG")
 
-    sentences_gdf_small = sentences_unique[
-        ["sentence_text", "matched_keywords_str", "matched_categories_str", "sentiment", "source_layer"]
-    ]
-    sentences_unique.to_csv(output_long_csv, index=False)
-    sentences_gdf_small.to_csv(output_short_csv, index=False)
+    short_cols = [text_col, "matched_keywords_str", "matched_categories_str", "sentiment", "source_layer"]
+    short_cols = [c for c in short_cols if c in text_unique.columns]
+    text_small = text_unique[short_cols].copy()
+    text_unique.to_csv(output_long_csv, index=False)
+    text_small.to_csv(output_short_csv, index=False)
 
-    print(len(sentences_unique), "unique sentences processed and saved.")
+    print(len(text_unique), "unique text units processed and saved.")
 
 
 if __name__ == "__main__":

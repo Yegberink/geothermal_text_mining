@@ -1,226 +1,313 @@
-import re
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
 import argparse
+import hashlib
+import json
 import os
+import time
 from pathlib import Path
+from typing import Dict, Optional
+
 import pandas as pd
+import requests
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from tqdm.auto import tqdm
-from pyabsa import AspectTermExtraction as ATEPC
-
-
-# ----------------------------
-# 1) Load model
-# ----------------------------
-aspect_extractor = ATEPC.AspectExtractor(
-    "multilingual",
-    auto_device=True,
-    cal_perplexity=False,
-)
-
-
-# ----------------------------
-# 2) Cleaning + Dutch-ish sentence/clause splitting
-# ----------------------------
-_SENT_SPLIT = re.compile(r'(?<=[\.\!\?])\s+(?=[A-ZÁÉÍÓÚÄËÏÖÜ"“])')
-_CLAUSE_SPLIT = re.compile(r"\s*(?:;|:|—)\s*|\s+(?:maar|echter|hoewel|toch)\s+", re.IGNORECASE)
-
-def clean_news_text(t: str) -> str:
-    """Light cleanup for newspaper paragraphs (tune as needed)."""
-    if t is None:
-        return ""
-    t = str(t).replace("\t", " ")
-    t = re.sub(r"\s+", " ", t).strip()
-
-    # Drop photo credit style tails (often noisy)
-    t = re.sub(r"\bFOTO\b.*?$", "", t, flags=re.IGNORECASE).strip()
-
-    # Drop leading ALL-CAPS headers / location tags (heuristic)
-    # e.g., "GEOTHERMIE ...", "ZUIDPLASPOLDER ..."
-    t = re.sub(r"^[A-ZÄËÏÖÜÁÉÍÓÚ0-9\s\-]{8,}\s+", "", t).strip()
-
-    return t
-
-def split_dutch_sentences_and_clauses(text: str, max_words: int = 35) -> list[str]:
-    """Split into sentences; if a sentence is long, split into smaller clauses."""
-    text = clean_news_text(text)
-    if not text:
-        return []
-
-    sents = [s.strip() for s in _SENT_SPLIT.split(text) if s.strip()]
-    out: list[str] = []
-
-    for s in sents:
-        if len(s.split()) > max_words:
-            parts = [p.strip() for p in _CLAUSE_SPLIT.split(s) if p.strip()]
-            out.extend(parts if parts else [s])
-        else:
-            out.append(s)
-
-    return out
-
-
-# ----------------------------
-# 3) ABSA prediction (batched)
-# ----------------------------
-def batched_predict(texts, batch_size=64, desc="Running ABSA"):
-    outputs = []
-    n = len(texts)
-
-    for i in tqdm(
-        range(0, n, batch_size),
-        total=(n + batch_size - 1) // batch_size,
-        desc=desc,
-        unit="batch",
-    ):
-        batch = texts[i : i + batch_size]
-        pred = aspect_extractor.predict(
-            batch,
-            print_result=False,
-            save_result=False,
-            ignore_error=True,
-            pred_sentiment=True,
-        )
-        outputs.extend(pred)
-
-    return outputs
-
-
-# ----------------------------
-# 4) Sentiment normalization: low confidence -> Neutral/Uncertain
-# ----------------------------
-def normalize_sentiment(label, conf, tau=0.60):
-    if label is None:
-        return None
-    try:
-        if conf is not None and float(conf) < tau:
-            return "Neutral/Uncertain"
-    except Exception:
-        pass
-    return label
-
-import uuid
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+SYSTEM = (
+    "You are a careful multilingual newspaper-analysis assistant. "
+    "You classify whether a paragraph is positive, neutral, or negative toward geothermal energy specifically."
+)
+SENTIMENT_MAP = {
+    "positive": "positive",
+    "pos": "positive",
+    "supportive": "positive",
+    "neutral": "neutral",
+    "neu": "neutral",
+    "mixed": "neutral",
+    "uncertain": "neutral",
+    "negative": "negative",
+    "neg": "negative",
+    "critical": "negative",
+}
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_geothermal_ollama.csv")
-    ap.add_argument("--output-csv", type=str, default="output/text/sentences_with_absa_v2.csv")
+    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_locations_ollama.csv")
+    ap.add_argument("--output-csv", type=str, default="output/text/paragraph_sentiment_llm.csv")
+    ap.add_argument("--checkpoint", type=str, default="cache/sentiment_checkpoint.parquet")
+    ap.add_argument("--cache", type=str, default="cache/sentiment_cache.jsonl")
+    ap.add_argument("--partial-csv", type=str, default="cache/sentiment_partial_results.csv")
+    ap.add_argument("--ollama-url", type=str, default="http://localhost:11434/api/generate")
+    ap.add_argument("--model", type=str, default="llama3.1:8b")
+    ap.add_argument("--country", type=str, default="")
+    ap.add_argument("--text-col", type=str, default="paragraph_text")
+    ap.add_argument("--save-every", type=int, default=25)
+    ap.add_argument("--sleep-s", type=float, default=0.0)
     return ap.parse_args()
 
 
-def main():
+def make_uid(row: Dict[str, object]) -> str:
+    if str(row.get("uid", "")).strip():
+        return str(row["uid"])
+    base = "||".join(
+        [
+            str(row.get("source", "")),
+            str(row.get("document_title", "")),
+            str(row.get("publish_date", "")),
+            str(row.get("paragraph_id", "")),
+            str(row.get("paragraph_text", "")),
+        ]
+    )
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def _fingerprint(text: str, country: str) -> str:
+    h = hashlib.sha256()
+    h.update((country or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((text or "").encode("utf-8"))
+    return h.hexdigest()
+
+
+def save_checkpoint(out: pd.DataFrame, checkpoint_path: Path, partial_csv_path: Optional[Path]) -> None:
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = checkpoint_path.with_suffix(checkpoint_path.suffix + ".tmp")
+    to_store = out.copy()
+    if to_store.index.name == "uid" and "uid" in to_store.columns:
+        to_store = to_store.reset_index(drop=True)
+    to_store.to_parquet(tmp_path, index=True)
+    tmp_path.replace(checkpoint_path)
+    if partial_csv_path is not None:
+        partial_csv_path.parent.mkdir(parents=True, exist_ok=True)
+        out.to_csv(partial_csv_path, index=False)
+
+
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((requests.Timeout, requests.ConnectionError, requests.HTTPError)),
+)
+def llm_geothermal_sentiment(
+    text: str,
+    country: str,
+    ollama_url: str,
+    model: str,
+) -> dict:
+    prompt = f"""
+Task: Classify the stance of this newspaper paragraph toward geothermal energy specifically.
+
+Context:
+- Main country of interest: {country or "not specified"}
+- The paragraph has already been identified as being about geothermal energy.
+
+Label definitions:
+- positive: the paragraph is supportive of geothermal, presents it as beneficial/desirable/feasible, or reports approval.
+- negative: the paragraph is critical of geothermal, presents it as risky/harmful/undesirable, or reports opposition/rejection.
+- neutral: the paragraph is mainly factual, balanced, mixed, or does not clearly lean positive or negative.
+
+Rules:
+- Judge sentiment toward geothermal specifically, not the overall mood of the writing.
+- If benefits and drawbacks are both presented without a clear dominant stance, return neutral.
+- Use the full paragraph context.
+- Output valid JSON only with keys: sentiment, confidence, evidence_short
+- sentiment must be one of: positive, neutral, negative
+- confidence must be a number from 0 to 1
+- evidence_short must be 20 words or fewer
+
+Paragraph:
+{text}
+""".strip()
+
+    payload = {
+        "model": model,
+        "system": SYSTEM,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0.0, "num_predict": 120},
+    }
+
+    r = requests.post(ollama_url, json=payload, timeout=120)
+    r.raise_for_status()
+    out = (r.json().get("response") or "").strip()
+
+    start = out.find("{")
+    end = out.rfind("}")
+    if start == -1 or end == -1:
+        return {"sentiment": "neutral", "confidence": 0.0, "evidence_short": "No JSON returned."}
+
+    try:
+        obj = json.loads(out[start:end + 1])
+    except json.JSONDecodeError:
+        return {"sentiment": "neutral", "confidence": 0.0, "evidence_short": "Invalid JSON."}
+
+    raw_sentiment = str(obj.get("sentiment", "neutral")).strip().lower()
+    sentiment = SENTIMENT_MAP.get(raw_sentiment, "neutral")
+
+    try:
+        confidence = float(obj.get("confidence", 0.0) or 0.0)
+    except Exception:
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+
+    evidence = str(obj.get("evidence_short", "") or "").strip()
+    return {"sentiment": sentiment, "confidence": confidence, "evidence_short": evidence}
+
+
+def batch_sentiment_resumable(
+    df: pd.DataFrame,
+    text_col: str,
+    checkpoint_path: Path,
+    cache_path: Path,
+    partial_csv_path: Optional[Path],
+    save_every: int,
+    sleep_s: float,
+    ollama_url: str,
+    model: str,
+    country: str,
+) -> pd.DataFrame:
+    if checkpoint_path.exists():
+        out = pd.read_parquet(checkpoint_path)
+        if "uid" in out.columns and out.index.name != "uid":
+            out = out.set_index("uid", drop=True)
+        out = out.reindex(df.index)
+        for c in df.columns:
+            if c not in out.columns:
+                out[c] = df[c]
+    else:
+        out = df.copy()
+        out["sentiment"] = None
+        out["sentiment_norm"] = None
+        out["sentiment_confidence"] = 0.0
+        out["sentiment_evidence_short"] = None
+        out["sentiment_status"] = None
+        out["sentiment_error"] = None
+
+    cache: Dict[str, dict] = {}
+    if cache_path.exists():
+        with cache_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    cache[obj["key"]] = obj["value"]
+                except Exception:
+                    pass
+
+    def cache_get(key: str):
+        return cache.get(key)
+
+    def cache_put(key: str, value: dict):
+        if key in cache:
+            return
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache[key] = value
+        with cache_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"key": key, "value": value}, ensure_ascii=False) + "\n")
+
+    def is_done(row) -> bool:
+        return row.get("sentiment_status") in ("ok", "empty")
+
+    todo_idx = [i for i, row in out.iterrows() if not is_done(row)]
+    pbar = tqdm(todo_idx, desc="Geothermal sentiment", unit="row")
+    processed_since_save = 0
+
+    try:
+        for i in pbar:
+            text = str(out.at[i, text_col] if text_col in out.columns else "") or ""
+            if not text.strip():
+                out.at[i, "sentiment"] = "neutral"
+                out.at[i, "sentiment_norm"] = "neutral"
+                out.at[i, "sentiment_confidence"] = 0.0
+                out.at[i, "sentiment_evidence_short"] = "Empty paragraph."
+                out.at[i, "sentiment_status"] = "empty"
+                out.at[i, "sentiment_error"] = None
+                processed_since_save += 1
+                continue
+
+            key = _fingerprint(text, country)
+            cached = cache_get(key)
+
+            try:
+                res = cached if cached is not None else llm_geothermal_sentiment(
+                    text=text,
+                    country=country,
+                    ollama_url=ollama_url,
+                    model=model,
+                )
+                if cached is None:
+                    cache_put(key, res)
+
+                out.at[i, "sentiment"] = res["sentiment"]
+                out.at[i, "sentiment_norm"] = res["sentiment"]
+                out.at[i, "sentiment_confidence"] = float(res["confidence"])
+                out.at[i, "sentiment_evidence_short"] = res["evidence_short"]
+                out.at[i, "sentiment_status"] = "ok"
+                out.at[i, "sentiment_error"] = None
+            except Exception as exc:
+                out.at[i, "sentiment_status"] = "error"
+                out.at[i, "sentiment_error"] = repr(exc)
+
+            processed_since_save += 1
+            if sleep_s:
+                time.sleep(sleep_s)
+            if processed_since_save >= save_every:
+                save_checkpoint(out, checkpoint_path, partial_csv_path)
+                processed_since_save = 0
+    except KeyboardInterrupt:
+        save_checkpoint(out, checkpoint_path, partial_csv_path)
+        raise
+
+    save_checkpoint(out, checkpoint_path, partial_csv_path)
+    return out
+
+
+def main() -> None:
     args = parse_args()
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
 
-    # ============================================================
-    # PIPELINE: paragraph -> sentences -> ABSA -> normalize 
-    # ============================================================
-    df = pd.read_csv(args.input_csv, dtype=str)
+    input_csv = Path(args.input_csv)
+    output_csv = Path(args.output_csv)
+    checkpoint = Path(args.checkpoint)
+    cache = Path(args.cache)
+    partial_csv = Path(args.partial_csv)
 
-    # keep only geothermal-related rows
-    df = df[df["llm_is_geothermal"] == "YES"].reset_index(drop=True)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    cache.parent.mkdir(parents=True, exist_ok=True)
 
-    # 1) prepare paragraph text
-    df["absa_text"] = df["paragraph_text"].fillna("").astype(str).map(clean_news_text)
+    df = pd.read_csv(input_csv)
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    if args.text_col not in df.columns:
+        raise ValueError(f"Expected text column '{args.text_col}' in input CSV.")
 
-    # 2) expand to sentence-level table
-    sent_records = []
-    for row_id, para in tqdm(zip(df.index.tolist(), df["absa_text"].tolist()),
-                             total=len(df), desc="Splitting", unit="para"):
-        sents = split_dutch_sentences_and_clauses(para, max_words=35)
-        if not sents:
-            sent_records.append({"row_id": row_id, "sentence_id": 0, "sentence_text": ""})
-        else:
-            for j, s in enumerate(sents):
-                sent_records.append({"row_id": row_id, "sentence_id": j, "sentence_text": s})
+    if "uid" not in df.columns:
+        df["uid"] = df.apply(make_uid, axis=1)
+    df = df.set_index("uid", drop=False)
 
-    sent_df = pd.DataFrame(sent_records)
-
-    # 3) run ABSA on sentences
-    sent_texts = sent_df["sentence_text"].tolist()
-    sent_preds = batched_predict(sent_texts, batch_size=64, desc="ABSA on sentences")
-
-    # 4) build long-form sentence-level ABSA table
-    long_rows = []
-    has_geo_relevance = "geo_relevance" in df.columns
-
-    for (row_id, sent_id, sent_text), p in zip(
-        sent_df[["row_id", "sentence_id", "sentence_text"]].itertuples(index=False, name=None),
-        sent_preds
-    ):
-        aspects = p.get("aspect", []) or []
-        sentiments = p.get("sentiment", []) or []
-        positions = p.get("position", []) or []
-        conf = p.get("confidence", []) or []
-
-        for j, a in enumerate(aspects):
-            c = conf[j] if j < len(conf) else None
-            s = sentiments[j] if j < len(sentiments) else None
-            s_norm = normalize_sentiment(s, c, tau=0.60)
-
-            rec = {
-                "row_id": row_id,
-                "sentence_id": sent_id,
-                "sentence_text": sent_text,
-                "aspect": a,
-                "sentiment": s,
-                "sentiment_norm": s_norm,
-                "confidence": c,
-                "position": positions[j] if j < len(positions) else None,
-            }
-            if has_geo_relevance:
-                rec["geo_relevance"] = df.at[row_id, "geo_relevance"]
-            long_rows.append(rec)
-
-    absa_sentence_long = pd.DataFrame(long_rows)
-
-    meta_cols = [
-        "llm_location",
-        "llm_granularity",
-        "source_file",
-        "source_path",
-        "newspaper",
-        "date",
-        "body",
-        "source",
-        "region_name",
-    ]
-
-    missing = [c for c in meta_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns in df: {missing}")
-
-    absa_sentence_long["sentence_uid"] = [uuid.uuid4().hex for _ in range(len(absa_sentence_long))]
-    for col in meta_cols:
-        absa_sentence_long[col] = absa_sentence_long["row_id"].map(df[col])
-
-    ordered_cols = (
-        [
-            "sentence_uid",
-            "row_id",
-            "sentence_id",
-            "sentence_text",
-            "aspect",
-            "sentiment",
-            "sentiment_norm",
-            "confidence",
-            "position",
-            "llm_location",
-            "llm_granularity",
-        ]
-        + meta_cols
+    out = batch_sentiment_resumable(
+        df=df,
+        text_col=args.text_col,
+        checkpoint_path=checkpoint,
+        cache_path=cache,
+        partial_csv_path=partial_csv,
+        save_every=args.save_every,
+        sleep_s=args.sleep_s,
+        ollama_url=args.ollama_url,
+        model=args.model,
+        country=args.country,
     )
-    ordered_cols = [c for c in ordered_cols if c in absa_sentence_long.columns]
-    absa_sentence_long = absa_sentence_long[ordered_cols]
-
-    out_sent = Path(args.output_csv)
-    out_sent.parent.mkdir(parents=True, exist_ok=True)
-    absa_sentence_long.to_csv(out_sent, index=False, encoding="utf-8")
-    print("Wrote:", out_sent)
-    print(len(absa_sentence_long))
+    out = out.reset_index(drop=True)
+    out.to_csv(output_csv, index=False, encoding="utf-8")
+    print(f"Wrote: {output_csv} (rows={len(out)})")
 
 
 if __name__ == "__main__":

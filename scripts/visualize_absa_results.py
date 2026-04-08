@@ -22,8 +22,8 @@ SENTIMENT_COLORS = {
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--admin-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
-    ap.add_argument("--categories-csv", type=str, default="output/text/sentences_with_categories_short.csv")
+    ap.add_argument("--admin-csv", type=str, default="output/text/paragraphs_with_categories_admin.csv")
+    ap.add_argument("--categories-csv", type=str, default="output/text/paragraphs_with_categories_short.csv")
     ap.add_argument("--output-dir", type=str, default="output/figures")
     return ap.parse_args()
 
@@ -79,13 +79,13 @@ def build_province_summary(admin_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    grouped["n_sentences"] = grouped["n_neg"] + grouped["n_neu"] + grouped["n_pos"]
-    denom = grouped["n_sentences"].replace({0: pd.NA})
+    grouped["n_paragraphs"] = grouped["n_neg"] + grouped["n_neu"] + grouped["n_pos"]
+    denom = grouped["n_paragraphs"].replace({0: pd.NA})
     grouped["pct_neg"] = 100 * grouped["n_neg"] / denom
     grouped["pct_neu"] = 100 * grouped["n_neu"] / denom
     grouped["pct_pos"] = 100 * grouped["n_pos"] / denom
     grouped["polarity_balance"] = grouped["pct_pos"] - grouped["pct_neg"]
-    grouped = grouped.sort_values(["n_sentences", "province_name"], ascending=[False, True]).reset_index(drop=True)
+    grouped = grouped.sort_values(["n_paragraphs", "province_name"], ascending=[False, True]).reset_index(drop=True)
     return grouped
 
 
@@ -114,7 +114,7 @@ def plot_province_sentiment_balance(province_tbl: pd.DataFrame, out_path: Path) 
     )
 
     ax.axvline(0, color="black", linewidth=0.8)
-    ax.set_xlabel("Percentage of sentences")
+    ax.set_xlabel("Percentage of paragraphs")
     ax.set_title("Sentiment per province")
 
     for spine in ax.spines.values():
@@ -163,7 +163,7 @@ def plot_province_stacked_distribution(province_tbl: pd.DataFrame, out_path: Pat
         bottom += plot_data[sentiment]
 
     ax.set_xlabel("Province")
-    ax.set_ylabel("Percentage of sentences")
+    ax.set_ylabel("Percentage of paragraphs")
     ax.spines["top"].set_visible(True)
     ax.spines["right"].set_visible(True)
     ax.set_axisbelow(True)
@@ -213,8 +213,8 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
     sentiment_counts["total"] = sentiment_counts.sum(axis=1)
     sentiment_counts = sentiment_counts.sort_values("total", ascending=False)
     plot_data = sentiment_counts.drop(columns="total").div(sentiment_counts["total"], axis=0) * 100
-    plot_data.loc["All sentences"] = overall_percent
-    plot_data = plot_data.loc[["All sentences"] + [idx for idx in plot_data.index if idx != "All sentences"]]
+    plot_data.loc["All paragraphs"] = overall_percent
+    plot_data = plot_data.loc[["All paragraphs"] + [idx for idx in plot_data.index if idx != "All paragraphs"]]
 
     configure_plot_style()
     fig, ax = plt.subplots(figsize=(9.5, 6), dpi=300)
@@ -232,7 +232,7 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
         )
         bottom += plot_data[sentiment]
 
-    ax.set_ylabel("Percentage of sentences")
+    ax.set_ylabel("Percentage of paragraphs")
     ax.set_ylim(0, 100)
     ax.margins(y=0)
     for spine in ax.spines.values():

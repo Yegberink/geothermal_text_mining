@@ -36,11 +36,11 @@ ALIAS_MAP = {
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/sentences_with_absa_v2.csv")
+    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_sentiment_llm.csv")
     ap.add_argument("--municipality-gpkg", type=str, default="data/dutch/admin_areas_municipalities_2025.gpkg")
     ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
-    ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_absa_and_geo_v2.gpkg")
-    ap.add_argument("--output-csv", type=str, default="output/text/sentence_offline_geocoding.csv")
+    ap.add_argument("--output-gpkg", type=str, default="output/text/paragraphs_with_geo_offline.gpkg")
+    ap.add_argument("--output-csv", type=str, default="output/text/paragraph_offline_geocoding.csv")
     return ap.parse_args()
 
 
@@ -225,7 +225,7 @@ def main():
     country_key = df["_gran"].eq("country")
     if country_key.any():
         df.loc[country_key, "geo_level"] = "country"
-        df.loc[country_key, "geo_name_matched"] = "Nederland"
+        df.loc[country_key, "geo_name_matched"] = df.loc[country_key, "_loc_first"].replace("", "country")
         df.loc[country_key, "geo_source"] = "cbs_gpkg_union_provinces"
         df.loc[country_key, "geo_match_type"] = "union"
         df.loc[country_key, "geo_lat"] = float(nl_centroid_wgs84.y)
@@ -317,7 +317,7 @@ def main():
         geometry=gpd.GeoSeries.from_wkt(df_points["geom_point_wkt"]),
         crs="EPSG:4326",
     )
-    gdf_points.to_file(args.output_gpkg, layer="sentences_points", driver="GPKG")
+    gdf_points.to_file(args.output_gpkg, layer="paragraphs_points", driver="GPKG")
 
     df_polys = df[df["geom_poly_wkt"].notna()].copy()
     gdf_polys = gpd.GeoDataFrame(
@@ -325,11 +325,11 @@ def main():
         geometry=gpd.GeoSeries.from_wkt(df_polys["geom_poly_wkt"]),
         crs="EPSG:4326",
     )
-    gdf_polys.to_file(args.output_gpkg, layer="sentences_polygons", driver="GPKG")
+    gdf_polys.to_file(args.output_gpkg, layer="paragraphs_polygons", driver="GPKG")
     df.to_csv(args.output_csv, index=False, encoding="utf-8")
 
     print("\nWrote GeoPackage:", args.output_gpkg)
-    print("Layers: sentences_points, sentences_polygons")
+    print("Layers: paragraphs_points, paragraphs_polygons")
 
 
 if __name__ == "__main__":
