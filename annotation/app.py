@@ -3,13 +3,51 @@ import os
 import json
 import zlib
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
+try:
+    import yaml
+except Exception:  # pragma: no cover
+    yaml = None
+
 # --- Config ---
-DATA_PATH = "sentences_for_annotation.csv"
+APP_DIR = Path(__file__).resolve().parent
+
+
+def resolve_data_path() -> str:
+    explicit = os.environ.get("ANNOTATION_DATA_PATH")
+    if explicit:
+        return explicit
+
+    local_default = APP_DIR / "sentences_for_annotation.csv"
+    if local_default.exists():
+        return str(local_default)
+
+    config_path = APP_DIR.parent / "config" / "config.yaml"
+    if yaml is not None and config_path.exists():
+        with config_path.open("r", encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+        language = config.get("language")
+        if language:
+            candidate = APP_DIR / language / "sentences_for_annotation.csv"
+            if candidate.exists():
+                return str(candidate)
+
+    language_dirs = sorted(
+        p for p in APP_DIR.iterdir()
+        if p.is_dir() and (p / "sentences_for_annotation.csv").exists()
+    )
+    if len(language_dirs) == 1:
+        return str(language_dirs[0] / "sentences_for_annotation.csv")
+
+    return str(local_default)
+
+
+DATA_PATH = resolve_data_path()
 DB_URL = os.environ.get("DB_URL", "sqlite:///annotations.db")
 engine = create_engine(DB_URL, future=True)
 

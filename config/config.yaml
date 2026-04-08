@@ -1,6 +1,11 @@
 python: python
 language: dutch
 country: Netherlands
+make_annotation_df: true
+
+annotation:
+  province_filter_regex: Zuid-Holland|Limburg
+  exclude_neutral: true
 
 preprocessing:
   date_locale:
@@ -76,14 +81,13 @@ online_geocoding:
   jitter: 0.25
   max_queries: 0
 
-layers:
-  municipality: gemeente_gegeneraliseerd
-  province: provincie_gegeneraliseerd
-
 paths:
   input_rtf_dir: input_data
-  newspaper_regions_csv: data/newspaper_regions.csv
-  cbs_gpkg: data/cbsgebiedsindelingen2025.gpkg
+  newspaper_regions_csv: data/newspaper_region_mapping.csv
+  municipality_gpkg: data/admin_areas_municipalities_2025.gpkg
+  province_gpkg: data/admin_areas_provinces_2025.gpkg
+  district_gpkg: data/statistical_areas_districts_2025.gpkg
+  neighborhood_gpkg: data/statistical_areas_neighborhoods_2025.gpkg
   keywords_topics_csv: vocab/keywords_topics.csv
 
   articles_csv: output/text/articles_cleaned.csv
@@ -105,6 +109,7 @@ paths:
   provinces_sentiment_balance_png: output/figures/provinces_sentiment_balance.png
   provinces_sentiment_distribution_png: output/figures/provinces_sentiment_distribution.png
   categories_sentiment_distribution_png: output/figures/categories_sentiment_distribution.png
+  annotation_sentences_csv: annotation/sentences_for_annotation.csv
 
   geo_checkpoint: cache/geo_checkpoint.parquet
   geo_cache: cache/geo_cache.jsonl

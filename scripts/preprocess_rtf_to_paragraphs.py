@@ -36,7 +36,7 @@ from tqdm.auto import tqdm
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 INPUT_RTF_DIR = PROJECT_DIR / "input_data"
-NEWSPAPER_REGION_CSV = PROJECT_DIR / "data" / "newspaper_regions.csv"
+NEWSPAPER_REGION_CSV = PROJECT_DIR / "data" / "dutch" / "newspaper_region_mapping.csv"
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "config.yaml"
 
 OUTPUT_DIR = PROJECT_DIR / "output" / "text"

@@ -23,9 +23,8 @@ def parse_args():
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
     ap.add_argument("--input-gpkg", type=str, default="output/text/sentences_with_categories.gpkg")
     ap.add_argument("--input-layer", type=str, default="sentences_with_categories")
-    ap.add_argument("--cbs-gpkg", type=str, default="data/cbsgebiedsindelingen2025.gpkg")
-    ap.add_argument("--layer-gemeente", type=str, default="gemeente_gegeneraliseerd")
-    ap.add_argument("--layer-provincie", type=str, default="provincie_gegeneraliseerd")
+    ap.add_argument("--municipality-gpkg", type=str, default="data/dutch/admin_areas_municipalities_2025.gpkg")
+    ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
     ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_categories_admin.gpkg")
     ap.add_argument("--output-layer", type=str, default="sentences_with_categories_admin")
     ap.add_argument("--output-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
@@ -38,8 +37,8 @@ def main():
     os.chdir(project_dir)
 
     sentences_gdf = gpd.read_file(args.input_gpkg, layer=args.input_layer)
-    muni = gpd.read_file(args.cbs_gpkg, layer=args.layer_gemeente)
-    prov = gpd.read_file(args.cbs_gpkg, layer=args.layer_provincie)
+    muni = gpd.read_file(args.municipality_gpkg)
+    prov = gpd.read_file(args.province_gpkg)
     if sentences_gdf.crs is None:
         raise ValueError("Input layer has no CRS.")
 

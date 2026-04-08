@@ -1,21 +1,19 @@
 import re
 import pandas as pd
 import geopandas as gpd
-import os
-os.chdir("/Users/Yannick/Documents/PhD/text_mining/geothermal")
+from pathlib import Path
 
 
 # -----------------------------
 # Configuration
 # -----------------------------
-MAPPING_CSV = "data/newspaper_regions.csv"
-CBS_GPKG = "data/cbsgebiedsindelingen2025.gpkg"
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+MAPPING_CSV = PROJECT_DIR / "data" / "dutch" / "newspaper_region_mapping.csv"
+MUNICIPALITY_GPKG = PROJECT_DIR / "data" / "dutch" / "admin_areas_municipalities_2025.gpkg"
+PROVINCE_GPKG = PROJECT_DIR / "data" / "dutch" / "admin_areas_provinces_2025.gpkg"
 
-LAYER_MUNI = "gemeente_gegeneraliseerd"
-LAYER_PROV = "provincie_gegeneraliseerd"
-
-OUT_GPKG = "output/regions_gdf_2025.gpkg"
-OUT_GEOJSON = "output/regions_gdf_2025.geojson"
+OUT_GPKG = PROJECT_DIR / "output" / "regions_gdf_2025.gpkg"
+OUT_GEOJSON = PROJECT_DIR / "output" / "regions_gdf_2025.geojson"
 
 
 # -----------------------------
@@ -76,11 +74,11 @@ def ensure_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 # -----------------------------
 # Main builder
 # -----------------------------
-def build_regions_gdf(mapping_csv: str, cbs_gpkg: str) -> gpd.GeoDataFrame:
+def build_regions_gdf(mapping_csv: str, municipality_gpkg: str, province_gpkg: str) -> gpd.GeoDataFrame:
     mapping = pd.read_csv(mapping_csv, dtype=str)
 
-    muni = ensure_wgs84(gpd.read_file(cbs_gpkg, layer=LAYER_MUNI))
-    prov = ensure_wgs84(gpd.read_file(cbs_gpkg, layer=LAYER_PROV))
+    muni = ensure_wgs84(gpd.read_file(municipality_gpkg))
+    prov = ensure_wgs84(gpd.read_file(province_gpkg))
 
     muni["_CODE"] = muni["statcode"].astype(str).str.upper()
     prov["_CODE"] = prov["statcode"].astype(str).str.upper()
@@ -154,7 +152,7 @@ def build_regions_gdf(mapping_csv: str, cbs_gpkg: str) -> gpd.GeoDataFrame:
 # Run
 # -----------------------------
 if __name__ == "__main__":
-    regions_gdf = build_regions_gdf(MAPPING_CSV, CBS_GPKG)
+    regions_gdf = build_regions_gdf(str(MAPPING_CSV), str(MUNICIPALITY_GPKG), str(PROVINCE_GPKG))
 
     regions_gdf.to_file(OUT_GPKG, layer="regions_gdf", driver="GPKG")
     regions_gdf.to_file(OUT_GEOJSON, driver="GeoJSON")

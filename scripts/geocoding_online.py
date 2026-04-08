@@ -26,9 +26,8 @@ def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
     ap.add_argument("--input-csv", type=str, default="output/text/sentence_offline_geocoding.csv")
-    ap.add_argument("--cbs-gpkg", type=str, default="data/cbsgebiedsindelingen2025.gpkg")
-    ap.add_argument("--layer-muni", type=str, default="gemeente_gegeneraliseerd")
-    ap.add_argument("--layer-prov", type=str, default="provincie_gegeneraliseerd")
+    ap.add_argument("--municipality-gpkg", type=str, default="data/dutch/admin_areas_municipalities_2025.gpkg")
+    ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
     ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_absa_and_geo_v2.gpkg")
     ap.add_argument("--cache-path", type=str, default="cache/nominatim_cache.json")
     ap.add_argument("--country", type=str, default="Netherlands")
@@ -164,12 +163,13 @@ def main() -> None:
     os.chdir(project_dir)
 
     input_csv = Path(args.input_csv)
-    cbs_gpkg = Path(args.cbs_gpkg)
+    municipality_gpkg = Path(args.municipality_gpkg)
+    province_gpkg = Path(args.province_gpkg)
     output_gpkg = Path(args.output_gpkg)
     cache_path = Path(args.cache_path)
 
-    muni_gdf = gpd.read_file(cbs_gpkg, layer=args.layer_muni)
-    prov_gdf = gpd.read_file(cbs_gpkg, layer=args.layer_prov)
+    muni_gdf = gpd.read_file(municipality_gpkg)
+    prov_gdf = gpd.read_file(province_gpkg)
     muni_wgs84 = with_wgs84_centroids(muni_gdf)
     prov_wgs84 = with_wgs84_centroids(prov_gdf)
 

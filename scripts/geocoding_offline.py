@@ -37,9 +37,8 @@ def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
     ap.add_argument("--input-csv", type=str, default="output/text/sentences_with_absa_v2.csv")
-    ap.add_argument("--cbs-gpkg", type=str, default="data/cbsgebiedsindelingen2025.gpkg")
-    ap.add_argument("--layer-muni", type=str, default="gemeente_gegeneraliseerd")
-    ap.add_argument("--layer-prov", type=str, default="provincie_gegeneraliseerd")
+    ap.add_argument("--municipality-gpkg", type=str, default="data/dutch/admin_areas_municipalities_2025.gpkg")
+    ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
     ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_absa_and_geo_v2.gpkg")
     ap.add_argument("--output-csv", type=str, default="output/text/sentence_offline_geocoding.csv")
     return ap.parse_args()
@@ -154,8 +153,8 @@ def main():
     Path(args.output_gpkg).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output_csv).parent.mkdir(parents=True, exist_ok=True)
 
-    muni_gdf = gpd.read_file(args.cbs_gpkg, layer=args.layer_muni)
-    prov_gdf = gpd.read_file(args.cbs_gpkg, layer=args.layer_prov)
+    muni_gdf = gpd.read_file(args.municipality_gpkg)
+    prov_gdf = gpd.read_file(args.province_gpkg)
     if muni_gdf.crs is None or prov_gdf.crs is None:
         raise ValueError("CBS layers must have CRS set.")
 
@@ -237,7 +236,7 @@ def main():
     if USE_WOONPLAATS_FALLBACK:
         try:
             import fiona
-            layers = set(fiona.listlayers(args.cbs_gpkg))
+            layers = set(fiona.listlayers(args.municipality_gpkg))
         except Exception:
             layers = set()
 
@@ -247,7 +246,7 @@ def main():
         )
 
         if woonplaats_layer:
-            wp = gpd.read_file(args.cbs_gpkg, layer=woonplaats_layer)
+            wp = gpd.read_file(args.municipality_gpkg, layer=woonplaats_layer)
             wp_name_col = pick_col_by_regex(wp.columns, [r"statnaam", r"woonplaats.*naam", r"\bnaam\b"])
             if wp_name_col:
                 wp = wp.copy()

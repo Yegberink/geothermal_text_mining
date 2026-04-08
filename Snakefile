@@ -6,9 +6,10 @@ PROJECT_DIR = Path(workflow.basedir).resolve()
 PYTHON = config.get("python", "python")
 OLLAMA = config["ollama"]
 ONLINE_GEOCODING = config.get("online_geocoding", {})
+MAKE_ANNOTATION_DF = config.get("make_annotation_df", False)
+ANNOTATION = config.get("annotation", {})
 PATHS = config["paths"]
 LANGUAGE = config.get("language")
-LAYERS = config["layers"]
 COUNTRY = config.get("country")
 
 
@@ -21,6 +22,10 @@ def _local_path(path_str):
             return str(Path("cache") / LANGUAGE / Path(*path.parts[1:]))
         if path.parts[0] == "input_data":
             return str(Path("input_data") / LANGUAGE / Path(*path.parts[1:]))
+        if path.parts[0] == "data":
+            return str(Path("data") / LANGUAGE / Path(*path.parts[1:]))
+        if path.parts[0] == "annotation":
+            return str(Path("annotation") / LANGUAGE / Path(*path.parts[1:]))
         if path.parts[0] == "vocab":
             return str(Path("vocab") / LANGUAGE / Path(*path.parts[1:]))
     return str(path)
@@ -30,14 +35,21 @@ if LANGUAGE:
     PATHS = {key: _local_path(value) for key, value in PATHS.items()}
 
 
+ALL_TARGETS = [
+    PATHS["sentences_with_categories_admin_csv"],
+    PATHS["sentences_with_categories_admin_gpkg"],
+    PATHS["province_sentiment_table_csv"],
+    PATHS["provinces_sentiment_balance_png"],
+    PATHS["provinces_sentiment_distribution_png"],
+    PATHS["categories_sentiment_distribution_png"],
+]
+if MAKE_ANNOTATION_DF:
+    ALL_TARGETS.append(PATHS["annotation_sentences_csv"])
+
+
 rule all:
     input:
-        PATHS["sentences_with_categories_admin_csv"],
-        PATHS["sentences_with_categories_admin_gpkg"],
-        PATHS["province_sentiment_table_csv"],
-        PATHS["provinces_sentiment_balance_png"],
-        PATHS["provinces_sentiment_distribution_png"],
-        PATHS["categories_sentiment_distribution_png"],
+        ALL_TARGETS,
 
 
 rule preprocess_rtf_to_paragraphs:
@@ -136,21 +148,18 @@ rule run_absa:
 rule geocode_sentences_offline:
     input:
         csv=PATHS["sentences_with_absa_csv"],
-        cbs=PATHS["cbs_gpkg"],
+        muni=PATHS["municipality_gpkg"],
+        prov=PATHS["province_gpkg"],
     output:
         gpkg=PATHS["sentences_with_absa_and_geo_offline_gpkg"],
         csv=PATHS["sentence_offline_geocoding_csv"],
-    params:
-        layer_muni=LAYERS["municipality"],
-        layer_prov=LAYERS["province"],
     shell:
         """
         {PYTHON} scripts/geocoding_offline.py \
           --project-dir {PROJECT_DIR} \
           --input-csv {input.csv} \
-          --cbs-gpkg {input.cbs} \
-          --layer-muni {params.layer_muni} \
-          --layer-prov {params.layer_prov} \
+          --municipality-gpkg {input.muni} \
+          --province-gpkg {input.prov} \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv}
         """
@@ -159,12 +168,11 @@ rule geocode_sentences_offline:
 rule geocode_sentences_online:
     input:
         csv=PATHS["sentence_offline_geocoding_csv"],
-        cbs=PATHS["cbs_gpkg"],
+        muni=PATHS["municipality_gpkg"],
+        prov=PATHS["province_gpkg"],
     output:
         gpkg=PATHS["sentences_with_absa_and_geo_gpkg"],
     params:
-        layer_muni=LAYERS["municipality"],
-        layer_prov=LAYERS["province"],
         cache=PATHS["nominatim_cache_json"],
         country_codes=ONLINE_GEOCODING.get("country_codes", ""),
         user_agent=ONLINE_GEOCODING.get("user_agent", "absa-geo-mapper"),
@@ -181,9 +189,8 @@ rule geocode_sentences_online:
         {PYTHON} scripts/geocoding_online.py \
           --project-dir {PROJECT_DIR} \
           --input-csv {input.csv} \
-          --cbs-gpkg {input.cbs} \
-          --layer-muni {params.layer_muni} \
-          --layer-prov {params.layer_prov} \
+          --municipality-gpkg {input.muni} \
+          --province-gpkg {input.prov} \
           --output-gpkg {output.gpkg} \
           --cache-path {params.cache} \
           --country "{COUNTRY}" \
@@ -223,21 +230,18 @@ rule classify_sentence_categories:
 rule aggregate_to_admin_areas:
     input:
         gpkg=PATHS["sentences_with_categories_gpkg"],
-        cbs=PATHS["cbs_gpkg"],
+        muni=PATHS["municipality_gpkg"],
+        prov=PATHS["province_gpkg"],
     output:
         gpkg=PATHS["sentences_with_categories_admin_gpkg"],
         csv=PATHS["sentences_with_categories_admin_csv"],
-    params:
-        layer_muni=LAYERS["municipality"],
-        layer_prov=LAYERS["province"],
     shell:
         """
         {PYTHON} scripts/geographic_aggregation.py \
           --project-dir {PROJECT_DIR} \
           --input-gpkg {input.gpkg} \
-          --cbs-gpkg {input.cbs} \
-          --layer-gemeente {params.layer_muni} \
-          --layer-provincie {params.layer_prov} \
+          --municipality-gpkg {input.muni} \
+          --province-gpkg {input.prov} \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv}
         """
@@ -261,4 +265,23 @@ rule visualize_absa_results:
           --admin-csv {input.admin_csv} \
           --categories-csv {input.categories_csv} \
           --output-dir {params.output_dir}
+        """
+
+
+rule make_annotation_df:
+    input:
+        admin_csv=PATHS["sentences_with_categories_admin_csv"],
+    output:
+        PATHS["annotation_sentences_csv"],
+    params:
+        province_filter_regex=ANNOTATION.get("province_filter_regex", ""),
+        exclude_neutral=ANNOTATION.get("exclude_neutral", True),
+    shell:
+        """
+        {PYTHON} scripts/make_annotation_df.py \
+          --project-dir {PROJECT_DIR} \
+          --input-csv {input.admin_csv} \
+          --output-csv {output} \
+          --province-filter-regex "{params.province_filter_regex}" \
+          --exclude-neutral {params.exclude_neutral}
         """
