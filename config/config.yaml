@@ -110,7 +110,8 @@ paths:
   provinces_sentiment_balance_png: output/figures/provinces_sentiment_balance.png
   provinces_sentiment_distribution_png: output/figures/provinces_sentiment_distribution.png
   categories_sentiment_distribution_png: output/figures/categories_sentiment_distribution.png
-  annotation_sentences_csv: annotation/sentences_for_annotation.csv
+  locations_heatmap_png: output/figures/locations_heatmap.png
+  annotation_paragraphs_csv: annotation/paragraphs_for_annotation.csv
 
   geo_checkpoint: cache/geo_checkpoint.parquet
   geo_cache: cache/geo_cache.jsonl

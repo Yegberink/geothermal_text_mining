@@ -31,6 +31,43 @@ def parse_args():
     return ap.parse_args()
 
 
+def add_admin_by_representative_point(
+    text_gdf: gpd.GeoDataFrame,
+    admin_gdf: gpd.GeoDataFrame,
+    name_col: str,
+    out_name_col: str,
+    code_col: str | None = None,
+    out_code_col: str | None = None,
+    eligible_mask=None,
+):
+    text_gdf = text_gdf.loc[:, ~text_gdf.columns.duplicated()].copy()
+
+    if eligible_mask is None:
+        eligible_mask = text_gdf[out_name_col].isna()
+    else:
+        eligible_mask = eligible_mask & text_gdf[out_name_col].isna()
+
+    if not eligible_mask.any():
+        return text_gdf
+
+    rep = text_gdf.loc[eligible_mask, ["geometry"]].copy()
+    rep["geometry"] = rep.geometry.representative_point()
+    rep = gpd.GeoDataFrame(rep, geometry="geometry", crs=text_gdf.crs)
+
+    keep_cols = [name_col, "geometry"]
+    if code_col is not None:
+        keep_cols.insert(0, code_col)
+
+    joined = gpd.sjoin(rep, admin_gdf[keep_cols], how="left", predicate="within")
+    joined = joined.loc[:, ~joined.columns.duplicated()]
+    text_gdf.loc[joined.index, out_name_col] = joined[name_col]
+
+    if code_col is not None and out_code_col is not None:
+        text_gdf.loc[joined.index, out_code_col] = joined[code_col]
+
+    return text_gdf
+
+
 def main():
     args = parse_args()
     project_dir = Path(args.project_dir).expanduser().resolve()
@@ -65,6 +102,20 @@ def main():
     if prov_code_col is not None:
         rename_dict[prov_code_col] = "province_code"
     text_gdf = text_gdf.rename(columns=rename_dict).drop(columns=["index_right"], errors="ignore")
+    non_country = (
+        text_gdf["geo_level"].astype(str).str.lower().ne("country")
+        if "geo_level" in text_gdf.columns
+        else None
+    )
+    text_gdf = add_admin_by_representative_point(
+        text_gdf=text_gdf,
+        admin_gdf=prov,
+        name_col=prov_name_col,
+        out_name_col="province_name",
+        code_col=prov_code_col,
+        out_code_col="province_code",
+        eligible_mask=non_country,
+    )
     print("Added province columns")
 
     muni_keep = [muni_name_col, "geometry"]
@@ -75,6 +126,20 @@ def main():
     if muni_code_col is not None:
         rename_dict[muni_code_col] = "municipality_code"
     text_gdf = text_gdf.rename(columns=rename_dict).drop(columns=["index_right"], errors="ignore")
+    eligible_for_muni = (
+        text_gdf["geo_level"].astype(str).str.lower().isin(["municipality", "city", "site"])
+        if "geo_level" in text_gdf.columns
+        else None
+    )
+    text_gdf = add_admin_by_representative_point(
+        text_gdf=text_gdf,
+        admin_gdf=muni,
+        name_col=muni_name_col,
+        out_name_col="municipality_name",
+        code_col=muni_code_col,
+        out_code_col="municipality_code",
+        eligible_mask=eligible_for_muni,
+    )
     text_gdf = text_gdf.loc[:, ~text_gdf.columns.duplicated()]
     print("Added municipality columns")
 

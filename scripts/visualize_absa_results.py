@@ -6,6 +6,7 @@ import argparse
 import os
 from pathlib import Path
 
+import geopandas as gpd
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -24,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
     ap.add_argument("--admin-csv", type=str, default="output/text/paragraphs_with_categories_admin.csv")
     ap.add_argument("--categories-csv", type=str, default="output/text/paragraphs_with_categories_short.csv")
+    ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
     ap.add_argument("--output-dir", type=str, default="output/figures")
     return ap.parse_args()
 
@@ -167,6 +169,21 @@ def plot_province_stacked_distribution(province_tbl: pd.DataFrame, out_path: Pat
     ax.spines["top"].set_visible(True)
     ax.spines["right"].set_visible(True)
     ax.set_axisbelow(True)
+
+    for idx, total in enumerate(plot_df["total"]):
+        if pd.notna(total):
+            ax.text(
+                idx,
+                101.5,
+                f"n={int(total)}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="#3a3a3a",
+                rotation=90,
+            )
+
+    ax.set_ylim(0, 108)
     plt.xticks(rotation=45, ha="right")
     ax.legend(
         title="Sentiment",
@@ -256,6 +273,97 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
     plt.close(fig)
 
 
+def plot_locations_heatmap(
+    admin_df: pd.DataFrame,
+    province_gpkg: Path,
+    out_path: Path,
+) -> None:
+    required = {"lon", "lat"}
+    missing = required - set(admin_df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns for location heatmap: {sorted(missing)}")
+
+    points_df = admin_df.copy()
+    points_df["lon"] = pd.to_numeric(points_df["lon"], errors="coerce")
+    points_df["lat"] = pd.to_numeric(points_df["lat"], errors="coerce")
+    points_df = points_df.dropna(subset=["lon", "lat"]).copy()
+    if points_df.empty:
+        raise ValueError("No valid lon/lat rows available for location heatmap.")
+
+    provinces = gpd.read_file(province_gpkg)
+    if provinces.crs is None:
+        raise ValueError("Province GeoPackage must have a CRS.")
+    provinces = provinces.to_crs("EPSG:4326")
+    provinces["_label_point"] = provinces.geometry.representative_point()
+
+    configure_plot_style()
+    fig, ax = plt.subplots(figsize=(8.8, 10.2), dpi=250)
+    fig.patch.set_facecolor("#f6f1e8")
+    ax.set_facecolor("#f6f1e8")
+
+    provinces.plot(
+        ax=ax,
+        color="#efe5d2",
+        edgecolor="#ffffff",
+        linewidth=1.0,
+        alpha=1.0,
+        zorder=0,
+    )
+    provinces.boundary.plot(ax=ax, color="#53483d", linewidth=0.9, alpha=0.7, zorder=2)
+
+    ax.scatter(
+        points_df["lon"],
+        points_df["lat"],
+        s=16,
+        c="#c75b39",
+        alpha=0.55,
+        edgecolors="white",
+        linewidths=0.25,
+        zorder=1.5,
+    )
+
+    xmin, ymin, xmax, ymax = provinces.total_bounds
+    xpad = (xmax - xmin) * 0.04
+    ypad = (ymax - ymin) * 0.04
+    ax.set_xlim(xmin - xpad, xmax + xpad)
+    ax.set_ylim(ymin - ypad, ymax + ypad)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_title("Plotted locations")
+    ax.set_aspect("equal")
+    ax.grid(False)
+
+    name_col = None
+    for cand in ["statnaam", "name", "naam", "provincie_naam"]:
+        if cand in provinces.columns:
+            name_col = cand
+            break
+    if name_col is not None:
+        for _, row in provinces.iterrows():
+            point = row["_label_point"]
+            ax.text(
+                point.x,
+                point.y,
+                str(row[name_col]),
+                fontsize=8.5,
+                color="#53483d",
+                ha="center",
+                va="center",
+                zorder=3,
+                bbox=dict(boxstyle="round,pad=0.18", fc=(246/255, 241/255, 232/255, 0.72), ec="none"),
+            )
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     project_dir = Path(args.project_dir).expanduser().resolve()
@@ -263,6 +371,7 @@ def main() -> None:
 
     admin_df = pd.read_csv(args.admin_csv)
     categories_df = pd.read_csv(args.categories_csv)
+    province_gpkg = Path(args.province_gpkg)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -282,11 +391,17 @@ def main() -> None:
         categories_df,
         output_dir / "categories_sentiment_distribution.png",
     )
+    plot_locations_heatmap(
+        admin_df,
+        province_gpkg,
+        output_dir / "locations_heatmap.png",
+    )
 
     print("Wrote:", output_dir / "province_sentiment_table.csv")
     print("Wrote:", output_dir / "provinces_sentiment_balance.png")
     print("Wrote:", output_dir / "provinces_sentiment_distribution.png")
     print("Wrote:", output_dir / "categories_sentiment_distribution.png")
+    print("Wrote:", output_dir / "locations_heatmap.png")
 
 
 if __name__ == "__main__":

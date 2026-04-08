@@ -42,9 +42,10 @@ ALL_TARGETS = [
     PATHS["provinces_sentiment_balance_png"],
     PATHS["provinces_sentiment_distribution_png"],
     PATHS["categories_sentiment_distribution_png"],
+    PATHS["locations_heatmap_png"],
 ]
 if MAKE_ANNOTATION_DF:
-    ALL_TARGETS.append(PATHS["annotation_sentences_csv"])
+    ALL_TARGETS.append(PATHS["annotation_paragraphs_csv"])
 
 
 rule all:
@@ -146,7 +147,7 @@ rule classify_paragraph_sentiment:
         save_every=OLLAMA["save_every"],
     shell:
         """
-        {PYTHON} scripts/ABSA.py \
+        {PYTHON} scripts/sentiment_classification.py \
           --project-dir {PROJECT_DIR} \
           --input-csv {input} \
           --output-csv {output} \
@@ -267,11 +268,13 @@ rule visualize_absa_results:
     input:
         admin_csv=PATHS["paragraphs_with_categories_admin_csv"],
         categories_csv=PATHS["paragraphs_with_categories_short_csv"],
+        province_gpkg=PATHS["province_gpkg"],
     output:
         table=PATHS["province_sentiment_table_csv"],
         balance=PATHS["provinces_sentiment_balance_png"],
         distribution=PATHS["provinces_sentiment_distribution_png"],
         categories=PATHS["categories_sentiment_distribution_png"],
+        heatmap=PATHS["locations_heatmap_png"],
     params:
         output_dir=PATHS["figures_dir"],
     shell:
@@ -280,6 +283,7 @@ rule visualize_absa_results:
           --project-dir {PROJECT_DIR} \
           --admin-csv {input.admin_csv} \
           --categories-csv {input.categories_csv} \
+          --province-gpkg {input.province_gpkg} \
           --output-dir {params.output_dir}
         """
 
@@ -288,7 +292,7 @@ rule make_annotation_df:
     input:
         admin_csv=PATHS["paragraphs_with_categories_admin_csv"],
     output:
-        PATHS["annotation_sentences_csv"],
+        PATHS["annotation_paragraphs_csv"],
     params:
         province_filter_regex=ANNOTATION.get("province_filter_regex", ""),
         exclude_neutral=ANNOTATION.get("exclude_neutral", True),
