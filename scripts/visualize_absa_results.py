@@ -334,7 +334,7 @@ def plot_locations_heatmap(
     ax.grid(False)
 
     name_col = None
-    for cand in ["statnaam", "name", "naam", "provincie_naam"]:
+    for cand in ["statnaam", "prov_name", "name", "naam", "provincie_naam"]:
         if cand in provinces.columns:
             name_col = cand
             break

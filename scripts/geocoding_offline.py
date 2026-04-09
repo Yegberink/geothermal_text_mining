@@ -61,7 +61,12 @@ def clean_loc(s: str) -> str:
     if s is None:
         return ""
     s = str(s).strip()
-    s = re.sub(r"^\s*(gemeente|provincie|stad|regio)\s+", "", s, flags=re.IGNORECASE)
+    s = re.sub(
+        r"^\s*(gemeente|provincie|stad|regio|comune|provincia|citta metropolitana|citt[aà])\s+",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
     s = re.sub(r"\s*\(.*?\)\s*", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
@@ -158,10 +163,22 @@ def main():
     if muni_gdf.crs is None or prov_gdf.crs is None:
         raise ValueError("CBS layers must have CRS set.")
 
-    muni_name_col = pick_col_by_regex(muni_gdf.columns, [r"statnaam", r"gemeente.*naam", r"gm_.*naam", r"\bnaam\b"])
-    muni_code_col = pick_col_by_regex(muni_gdf.columns, [r"statcode", r"gemeente.*code", r"gm_.*code", r"\bcode\b"])
-    prov_name_col = pick_col_by_regex(prov_gdf.columns, [r"statnaam", r"provincie.*naam", r"pv_.*naam", r"\bnaam\b"])
-    prov_code_col = pick_col_by_regex(prov_gdf.columns, [r"statcode", r"provincie.*code", r"pv_.*code", r"\bcode\b"])
+    muni_name_col = pick_col_by_regex(
+        muni_gdf.columns,
+        [r"statnaam", r"gemeente.*naam", r"gm_.*naam", r"com.*name", r"\bname\b", r"\bnaam\b"],
+    )
+    muni_code_col = pick_col_by_regex(
+        muni_gdf.columns,
+        [r"statcode", r"gemeente.*code", r"gm_.*code", r"com.*istat.*code", r"com.*code", r"\bcode\b"],
+    )
+    prov_name_col = pick_col_by_regex(
+        prov_gdf.columns,
+        [r"statnaam", r"provincie.*naam", r"pv_.*naam", r"prov.*name", r"\bname\b", r"\bnaam\b"],
+    )
+    prov_code_col = pick_col_by_regex(
+        prov_gdf.columns,
+        [r"statcode", r"provincie.*code", r"pv_.*code", r"prov.*istat.*code", r"prov.*acr", r"\bcode\b"],
+    )
     if muni_name_col is None or prov_name_col is None:
         raise ValueError(
             "Could not detect CBS name columns.\n"

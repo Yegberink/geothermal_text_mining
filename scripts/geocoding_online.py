@@ -174,10 +174,10 @@ def main() -> None:
     prov_wgs84 = with_wgs84_centroids(prov_gdf)
 
     muni_name_col = pick_col_by_regex(
-        muni_gdf.columns, [r"statnaam", r"gemeente.*naam", r"gm_.*naam", r"\bnaam\b"]
+        muni_gdf.columns, [r"statnaam", r"gemeente.*naam", r"gm_.*naam", r"com.*name", r"\bname\b", r"\bnaam\b"]
     )
     prov_name_col = pick_col_by_regex(
-        prov_gdf.columns, [r"statnaam", r"provincie.*naam", r"pv_.*naam", r"\bnaam\b"]
+        prov_gdf.columns, [r"statnaam", r"provincie.*naam", r"pv_.*naam", r"prov.*name", r"\bname\b", r"\bnaam\b"]
     )
     if muni_name_col is None or prov_name_col is None:
         raise ValueError("Could not detect municipality/province name columns in CBS GeoPackage.")

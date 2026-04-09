@@ -35,6 +35,15 @@ if LANGUAGE:
     PATHS = {key: _local_path(value) for key, value in PATHS.items()}
 
 
+def _default_country_codes(country):
+    country_norm = str(country or "").strip().lower()
+    mapping = {
+        "netherlands": "nl,be,bq,aw,cw,sx",
+        "italy": "it,sm,va",
+    }
+    return mapping.get(country_norm, "")
+
+
 ALL_TARGETS = [
     PATHS["paragraphs_with_categories_admin_csv"],
     PATHS["paragraphs_with_categories_admin_gpkg"],
@@ -191,7 +200,7 @@ rule geocode_paragraphs_online:
         gpkg=PATHS["paragraphs_with_geo_gpkg"],
     params:
         cache=PATHS["nominatim_cache_json"],
-        country_codes=ONLINE_GEOCODING.get("country_codes", ""),
+        country_codes=ONLINE_GEOCODING.get("country_codes") or _default_country_codes(COUNTRY),
         user_agent=ONLINE_GEOCODING.get("user_agent", "absa-geo-mapper"),
         save_every=ONLINE_GEOCODING.get("save_every", 50),
         print_every=ONLINE_GEOCODING.get("print_every", 25),

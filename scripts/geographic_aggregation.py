@@ -79,10 +79,10 @@ def main():
     if text_gdf.crs is None:
         raise ValueError("Input layer has no CRS.")
 
-    prov_name_col = pick_col_by_regex(prov.columns, [r"statnaam", r"provincie.*naam", r"\bnaam\b", r"name"])
-    muni_name_col = pick_col_by_regex(muni.columns, [r"statnaam", r"gemeente.*naam", r"\bnaam\b", r"name"])
-    prov_code_col = pick_col_by_regex(prov.columns, [r"statcode", r"pv_.*code", r"provincie.*code", r"\bcode\b"])
-    muni_code_col = pick_col_by_regex(muni.columns, [r"statcode", r"gm_.*code", r"gemeente.*code", r"\bcode\b"])
+    prov_name_col = pick_col_by_regex(prov.columns, [r"statnaam", r"provincie.*naam", r"prov.*name", r"\bnaam\b", r"name"])
+    muni_name_col = pick_col_by_regex(muni.columns, [r"statnaam", r"gemeente.*naam", r"com.*name", r"\bnaam\b", r"name"])
+    prov_code_col = pick_col_by_regex(prov.columns, [r"statcode", r"pv_.*code", r"provincie.*code", r"prov.*istat.*code", r"prov.*acr", r"\bcode\b"])
+    muni_code_col = pick_col_by_regex(muni.columns, [r"statcode", r"gm_.*code", r"gemeente.*code", r"com.*istat.*code", r"com.*code", r"\bcode\b"])
 
     if prov_name_col is None:
         raise ValueError("Could not detect province name column.")
