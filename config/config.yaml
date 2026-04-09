@@ -1,6 +1,6 @@
 python: python
-language: dutch
-country: Netherlands
+language: italian
+country: Italy
 make_annotation_df: true
 
 annotation:

@@ -318,6 +318,7 @@ rule visualize_absa_results:
         admin_csv=PATHS["sentences_with_categories_admin_csv"],
         categories_csv=PATHS["sentences_with_categories_short_csv"],
         province_gpkg=PATHS["province_gpkg"],
+        script=str(PROJECT_DIR / "scripts" / "visualize_absa_results.py"),
     output:
         table=PATHS["province_sentiment_table_csv"],
         balance=PATHS["provinces_sentiment_balance_png"],

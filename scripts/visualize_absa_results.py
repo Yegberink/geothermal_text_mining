@@ -21,6 +21,7 @@ SENTIMENT_COLORS = {
     "neutral": "#999999",
     "positive": "#009E73",
 }
+MIN_PROVINCE_SENTENCES = 31
 
 
 def parse_args() -> argparse.Namespace:
@@ -94,12 +95,34 @@ def build_province_summary(admin_df: pd.DataFrame) -> pd.DataFrame:
     grouped["pct_neu"] = 100 * grouped["n_neu"] / denom
     grouped["pct_pos"] = 100 * grouped["n_pos"] / denom
     grouped["polarity_balance"] = grouped["pct_pos"] - grouped["pct_neg"]
+    grouped = grouped[grouped["n_text_units"] >= MIN_PROVINCE_SENTENCES].copy()
     grouped = grouped.sort_values(["n_text_units", "province_name"], ascending=[False, True]).reset_index(drop=True)
     return grouped
 
 
 def plot_province_sentiment_balance(province_tbl: pd.DataFrame, out_path: Path) -> None:
-    df = province_tbl.copy().sort_values("polarity_balance")
+    df = province_tbl.copy()
+    if not df.empty:
+        total_neg = df["n_neg"].sum()
+        total_neu = df["n_neu"].sum()
+        total_pos = df["n_pos"].sum()
+        total_n = total_neg + total_neu + total_pos
+        if total_n > 0:
+            overall = pd.DataFrame(
+                [{
+                    "province_name": "All sentences",
+                    "n_neg": total_neg,
+                    "n_neu": total_neu,
+                    "n_pos": total_pos,
+                    "n_text_units": total_n,
+                    "pct_neg": 100 * total_neg / total_n,
+                    "pct_neu": 100 * total_neu / total_n,
+                    "pct_pos": 100 * total_pos / total_n,
+                    "polarity_balance": 100 * total_pos / total_n - 100 * total_neg / total_n,
+                }]
+            )
+            df = pd.concat([overall, df], ignore_index=True)
+    df = df.sort_values("polarity_balance")
     configure_plot_style()
 
     fig, ax = plt.subplots(figsize=(8, 6), dpi=200)
@@ -147,6 +170,12 @@ def plot_province_stacked_distribution(province_tbl: pd.DataFrame, out_path: Pat
         .sum()
         .sort_values(["n_neg", "n_neu", "n_pos"], ascending=False)
     )
+    if not plot_df.empty:
+        plot_df.loc["All sentences"] = {
+            "n_neg": plot_df["n_neg"].sum(),
+            "n_neu": plot_df["n_neu"].sum(),
+            "n_pos": plot_df["n_pos"].sum(),
+        }
     plot_df["total"] = plot_df["n_neg"] + plot_df["n_neu"] + plot_df["n_pos"]
     denom = plot_df["total"].replace({0: pd.NA})
 
@@ -154,6 +183,10 @@ def plot_province_stacked_distribution(province_tbl: pd.DataFrame, out_path: Pat
     plot_data["negative"] = 100 * plot_df["n_neg"] / denom
     plot_data["neutral"] = 100 * plot_df["n_neu"] / denom
     plot_data["positive"] = 100 * plot_df["n_pos"] / denom
+    if "All sentences" in plot_data.index:
+        ordered_index = ["All sentences"] + [idx for idx in plot_data.index if idx != "All sentences"]
+        plot_data = plot_data.loc[ordered_index]
+        plot_df = plot_df.loc[ordered_index]
 
     configure_plot_style()
     fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
