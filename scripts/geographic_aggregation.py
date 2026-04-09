@@ -21,13 +21,13 @@ def pick_col_by_regex(cols, patterns):
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-gpkg", type=str, default="output/text/paragraphs_with_categories.gpkg")
-    ap.add_argument("--input-layer", type=str, default="paragraphs_with_categories")
+    ap.add_argument("--input-gpkg", type=str, default="output/text/sentences_with_categories.gpkg")
+    ap.add_argument("--input-layer", type=str, default="sentences_with_categories")
     ap.add_argument("--municipality-gpkg", type=str, default="data/dutch/admin_areas_municipalities_2025.gpkg")
     ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
-    ap.add_argument("--output-gpkg", type=str, default="output/text/paragraphs_with_categories_admin.gpkg")
-    ap.add_argument("--output-layer", type=str, default="paragraphs_with_categories_admin")
-    ap.add_argument("--output-csv", type=str, default="output/text/paragraphs_with_categories_admin.csv")
+    ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_categories_admin.gpkg")
+    ap.add_argument("--output-layer", type=str, default="sentences_with_categories_admin")
+    ap.add_argument("--output-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
     return ap.parse_args()
 
 

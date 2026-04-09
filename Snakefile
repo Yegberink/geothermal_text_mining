@@ -45,16 +45,16 @@ def _default_country_codes(country):
 
 
 ALL_TARGETS = [
-    PATHS["paragraphs_with_categories_admin_csv"],
-    PATHS["paragraphs_with_categories_admin_gpkg"],
+    PATHS["sentences_with_categories_admin_csv"],
+    PATHS["sentences_with_categories_admin_gpkg"],
     PATHS["province_sentiment_table_csv"],
     PATHS["provinces_sentiment_balance_png"],
     PATHS["provinces_sentiment_distribution_png"],
     PATHS["categories_sentiment_distribution_png"],
-    PATHS["locations_heatmap_png"],
+    PATHS["locations_map_html"],
 ]
 if MAKE_ANNOTATION_DF:
-    ALL_TARGETS.append(PATHS["annotation_paragraphs_csv"])
+    ALL_TARGETS.append(PATHS["annotation_sentences_csv"])
 
 
 rule all:
@@ -141,44 +141,76 @@ rule extract_locations:
         """
 
 
-rule classify_paragraph_sentiment:
+rule split_paragraphs_to_sentences:
     input:
         PATHS["paragraph_locations_csv"],
     output:
-        PATHS["paragraph_sentiment_csv"],
+        PATHS["sentence_locations_csv"],
+    shell:
+        """
+        {PYTHON} scripts/split_paragraphs_to_sentences.py \
+          --project-dir {PROJECT_DIR} \
+          --input-csv {input} \
+          --output-csv {output} \
+          --language {LANGUAGE}
+        """
+
+
+rule identify_sentence_frames:
+    input:
+        csv=PATHS["sentence_locations_csv"],
+        keywords=PATHS["keywords_topics_csv"],
+    output:
+        long_csv=PATHS["sentences_with_frames_long_csv"],
+        short_csv=PATHS["sentences_with_frames_short_csv"],
+    shell:
+        """
+        {PYTHON} scripts/classification_sentences.py \
+          --project-dir {PROJECT_DIR} \
+          --input-csv {input.csv} \
+          --keywords-csv {input.keywords} \
+          --output-long-csv {output.long_csv} \
+          --output-short-csv {output.short_csv} \
+          --keep-only-matched True
+        """
+
+
+rule classify_sentence_sentiment:
+    input:
+        PATHS["sentences_with_frames_long_csv"],
+    output:
+        PATHS["sentence_sentiment_csv"],
     params:
-        checkpoint=PATHS["sentiment_checkpoint"],
-        cache=PATHS["sentiment_cache"],
-        partial=PATHS["sentiment_partial_csv"],
-        model=OLLAMA["sentiment_model"],
-        url=OLLAMA["url"],
-        sleep_s=OLLAMA["sleep_s"],
-        save_every=OLLAMA["save_every"],
+        checkpoint=PATHS["sentence_sentiment_checkpoint"],
+        cache=PATHS["sentence_sentiment_cache"],
+        partial=PATHS["sentence_sentiment_partial_csv"],
+        model=config.get("sentiment_hf", {}).get("model", "nlptown/bert-base-multilingual-uncased-sentiment"),
+        batch_size=config.get("sentiment_hf", {}).get("batch_size", 32),
+        max_length=config.get("sentiment_hf", {}).get("max_length", 256),
     shell:
         """
         {PYTHON} scripts/sentiment_classification.py \
           --project-dir {PROJECT_DIR} \
           --input-csv {input} \
           --output-csv {output} \
+          --text-col sentence_text \
           --checkpoint {params.checkpoint} \
           --cache {params.cache} \
           --partial-csv {params.partial} \
-          --ollama-url {params.url} \
           --model {params.model} \
-          --country {COUNTRY} \
-          --sleep-s {params.sleep_s} \
-          --save-every {params.save_every}
+          --batch-size {params.batch_size} \
+          --max-length {params.max_length}
         """
 
 
-rule geocode_paragraphs_offline:
+rule geocode_sentences_offline:
     input:
-        csv=PATHS["paragraph_sentiment_csv"],
+        csv=PATHS["sentence_sentiment_csv"],
         muni=PATHS["municipality_gpkg"],
         prov=PATHS["province_gpkg"],
     output:
-        gpkg=PATHS["paragraphs_with_geo_offline_gpkg"],
-        csv=PATHS["paragraph_offline_geocoding_csv"],
+        gpkg=PATHS["sentences_with_geo_offline_gpkg"],
+        csv=PATHS["sentence_offline_geocoding_csv"],
     shell:
         """
         {PYTHON} scripts/geocoding_offline.py \
@@ -187,17 +219,19 @@ rule geocode_paragraphs_offline:
           --municipality-gpkg {input.muni} \
           --province-gpkg {input.prov} \
           --output-gpkg {output.gpkg} \
-          --output-csv {output.csv}
+          --output-csv {output.csv} \
+          --points-layer sentences_points \
+          --polygons-layer sentences_polygons
         """
 
 
-rule geocode_paragraphs_online:
+rule geocode_sentences_online:
     input:
-        csv=PATHS["paragraph_offline_geocoding_csv"],
+        csv=PATHS["sentence_offline_geocoding_csv"],
         muni=PATHS["municipality_gpkg"],
         prov=PATHS["province_gpkg"],
     output:
-        gpkg=PATHS["paragraphs_with_geo_gpkg"],
+        gpkg=PATHS["sentences_with_geo_gpkg"],
     params:
         cache=PATHS["nominatim_cache_json"],
         country_codes=ONLINE_GEOCODING.get("country_codes") or _default_country_codes(COUNTRY),
@@ -229,43 +263,49 @@ rule geocode_paragraphs_online:
           --max-retries {params.max_retries} \
           --backoff-base {params.backoff_base} \
           --jitter {params.jitter} \
-          --max-queries {params.max_queries}
+          --max-queries {params.max_queries} \
+          --points-layer sentences_points \
+          --polygons-layer sentences_polygons
         """
 
 
-rule classify_paragraph_categories:
+rule classify_sentence_categories:
     input:
-        gpkg=PATHS["paragraphs_with_geo_gpkg"],
+        gpkg=PATHS["sentences_with_geo_gpkg"],
         keywords=PATHS["keywords_topics_csv"],
     output:
-        gpkg=PATHS["paragraphs_with_categories_gpkg"],
-        long_csv=PATHS["paragraphs_with_categories_long_csv"],
-        short_csv=PATHS["paragraphs_with_categories_short_csv"],
+        gpkg=PATHS["sentences_with_categories_gpkg"],
+        long_csv=PATHS["sentences_with_categories_long_csv"],
+        short_csv=PATHS["sentences_with_categories_short_csv"],
     shell:
         """
         {PYTHON} scripts/classification_sentences.py \
           --project-dir {PROJECT_DIR} \
           --input-gpkg {input.gpkg} \
+          --input-point-layer sentences_points \
+          --input-polygon-layer sentences_polygons \
           --keywords-csv {input.keywords} \
           --output-gpkg {output.gpkg} \
           --output-long-csv {output.long_csv} \
-          --output-short-csv {output.short_csv}
+          --output-short-csv {output.short_csv} \
+          --keep-only-matched True
         """
 
 
 rule aggregate_to_admin_areas:
     input:
-        gpkg=PATHS["paragraphs_with_categories_gpkg"],
+        gpkg=PATHS["sentences_with_categories_gpkg"],
         muni=PATHS["municipality_gpkg"],
         prov=PATHS["province_gpkg"],
     output:
-        gpkg=PATHS["paragraphs_with_categories_admin_gpkg"],
-        csv=PATHS["paragraphs_with_categories_admin_csv"],
+        gpkg=PATHS["sentences_with_categories_admin_gpkg"],
+        csv=PATHS["sentences_with_categories_admin_csv"],
     shell:
         """
         {PYTHON} scripts/geographic_aggregation.py \
           --project-dir {PROJECT_DIR} \
           --input-gpkg {input.gpkg} \
+          --input-layer sentences_with_categories \
           --municipality-gpkg {input.muni} \
           --province-gpkg {input.prov} \
           --output-gpkg {output.gpkg} \
@@ -275,15 +315,15 @@ rule aggregate_to_admin_areas:
 
 rule visualize_absa_results:
     input:
-        admin_csv=PATHS["paragraphs_with_categories_admin_csv"],
-        categories_csv=PATHS["paragraphs_with_categories_short_csv"],
+        admin_csv=PATHS["sentences_with_categories_admin_csv"],
+        categories_csv=PATHS["sentences_with_categories_short_csv"],
         province_gpkg=PATHS["province_gpkg"],
     output:
         table=PATHS["province_sentiment_table_csv"],
         balance=PATHS["provinces_sentiment_balance_png"],
         distribution=PATHS["provinces_sentiment_distribution_png"],
         categories=PATHS["categories_sentiment_distribution_png"],
-        heatmap=PATHS["locations_heatmap_png"],
+        heatmap=PATHS["locations_map_html"],
     params:
         output_dir=PATHS["figures_dir"],
     shell:
@@ -299,9 +339,9 @@ rule visualize_absa_results:
 
 rule make_annotation_df:
     input:
-        admin_csv=PATHS["paragraphs_with_categories_admin_csv"],
+        admin_csv=PATHS["sentences_with_categories_admin_csv"],
     output:
-        PATHS["annotation_paragraphs_csv"],
+        PATHS["annotation_sentences_csv"],
     params:
         province_filter_regex=ANNOTATION.get("province_filter_regex", ""),
         exclude_neutral=ANNOTATION.get("exclude_neutral", True),

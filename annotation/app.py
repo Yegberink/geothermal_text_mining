@@ -1,6 +1,5 @@
-# app.py
-import os
 import json
+import os
 import zlib
 from datetime import datetime
 from pathlib import Path
@@ -14,8 +13,14 @@ try:
 except Exception:  # pragma: no cover
     yaml = None
 
-# --- Config ---
 APP_DIR = Path(__file__).resolve().parent
+DB_URL = os.environ.get("DB_URL", "sqlite:///annotations.db")
+engine = create_engine(DB_URL, future=True)
+
+SENTIMENTS = ["positive", "neutral", "negative"]
+ANNOTATORS = ["Egberink", "Dekker"]
+OVERLAP_MOD = 20
+OVERLAP_BUCKETS = {0, 1}
 
 
 def resolve_data_path() -> str:
@@ -23,11 +28,11 @@ def resolve_data_path() -> str:
     if explicit:
         return explicit
 
-    local_default = APP_DIR / "paragraphs_for_annotation.csv"
+    local_default = APP_DIR / "sentences_for_annotation.csv"
     if local_default.exists():
         return str(local_default)
 
-    legacy_local = APP_DIR / "sentences_for_annotation.csv"
+    legacy_local = APP_DIR / "paragraphs_for_annotation.csv"
     if legacy_local.exists():
         return str(legacy_local)
 
@@ -37,78 +42,54 @@ def resolve_data_path() -> str:
             config = yaml.safe_load(f) or {}
         language = config.get("language")
         if language:
-            candidate = APP_DIR / language / "paragraphs_for_annotation.csv"
-            if candidate.exists():
-                return str(candidate)
-            legacy_candidate = APP_DIR / language / "sentences_for_annotation.csv"
-            if legacy_candidate.exists():
-                return str(legacy_candidate)
-
-    language_dirs = sorted(
-        p for p in APP_DIR.iterdir()
-        if p.is_dir() and (
-            (p / "paragraphs_for_annotation.csv").exists()
-            or (p / "sentences_for_annotation.csv").exists()
-        )
-    )
-    if len(language_dirs) == 1:
-        paragraph_candidate = language_dirs[0] / "paragraphs_for_annotation.csv"
-        if paragraph_candidate.exists():
-            return str(paragraph_candidate)
-        return str(language_dirs[0] / "sentences_for_annotation.csv")
+            for name in ["sentences_for_annotation.csv", "paragraphs_for_annotation.csv"]:
+                candidate = APP_DIR / language / name
+                if candidate.exists():
+                    return str(candidate)
 
     return str(local_default)
 
 
 DATA_PATH = resolve_data_path()
-DB_URL = os.environ.get("DB_URL", "sqlite:///annotations.db")
-engine = create_engine(DB_URL, future=True)
-
-SENTIMENTS = ["Positive", "Neutral", "Negative"]
-ANNOTATORS = ["Egberink", "Dekker"]
-
-# --- Balanced split + 10% overlap ---
-OVERLAP_MOD = 20
-OVERLAP_BUCKETS = {0, 1}
 
 
 def stable_bucket(value) -> int:
-    s = str(value).encode("utf-8")
-    return zlib.crc32(s) % OVERLAP_MOD
+    return zlib.crc32(str(value).encode("utf-8")) % OVERLAP_MOD
 
 
 def parse_listish(value):
-    """
-    Parse semicolon-separated strings like:
-    'Knowledge availability;Costs'
-    """
     if value is None:
         return []
-
     if isinstance(value, float) and pd.isna(value):
         return []
-
     s = str(value).strip()
     if not s or s.lower() in {"nan", "none", "null"}:
         return []
-
-    parts = [x.strip() for x in s.split(";")]
-    return [x for x in parts if x]
+    return [x.strip() for x in s.split(";") if x.strip()]
 
 
 def collect_all_categories_from_df(df: pd.DataFrame):
+    all_cats = set()
     if "matched_categories_str" not in df.columns:
         return []
-
-    all_cats = set()
     for val in df["matched_categories_str"].dropna():
-        for cat in parse_listish(val):
-            all_cats.add(cat)
-
+        all_cats.update(parse_listish(val))
     return sorted(all_cats)
 
 
-# --- DB setup ---
+def normalize_sentiment_value(value):
+    mapping = {
+        "positive": "positive",
+        "pos": "positive",
+        "negative": "negative",
+        "neg": "negative",
+        "neutral": "neutral",
+        "neu": "neutral",
+        "neutral/uncertain": "neutral",
+    }
+    return mapping.get(str(value).strip().lower(), "")
+
+
 def init_db():
     with engine.begin() as conn:
         conn.execute(text("""
@@ -125,10 +106,14 @@ def init_db():
         CREATE TABLE IF NOT EXISTS annotations (
             paragraph_uid TEXT,
             annotator TEXT,
+            geothermal_relevant INTEGER,
             sentiment_correct INTEGER,
+            sentiment_true TEXT,
             matched_categories_present INTEGER,
             matched_categories_correct INTEGER,
             matched_categories_true TEXT,
+            location_correct INTEGER,
+            location_true TEXT,
             keywords_to_add TEXT,
             notes TEXT,
             created_at TEXT,
@@ -137,20 +122,19 @@ def init_db():
 
 
 def migrate_db():
-    """
-    Safe migration for older annotation DBs.
-    Old unused columns can remain in place.
-    """
     needed_cols = {
+        "geothermal_relevant": "INTEGER",
         "sentiment_correct": "INTEGER",
+        "sentiment_true": "TEXT",
         "matched_categories_present": "INTEGER",
         "matched_categories_correct": "INTEGER",
         "matched_categories_true": "TEXT",
+        "location_correct": "INTEGER",
+        "location_true": "TEXT",
         "keywords_to_add": "TEXT",
         "notes": "TEXT",
         "created_at": "TEXT",
     }
-
     with engine.begin() as conn:
         task_existing = conn.execute(text("PRAGMA table_info(tasks)")).fetchall()
         task_existing_cols = {row[1] for row in task_existing}
@@ -159,33 +143,28 @@ def migrate_db():
         if "paragraph_text" not in task_existing_cols and "sentence_text" in task_existing_cols:
             conn.execute(text("ALTER TABLE tasks RENAME COLUMN sentence_text TO paragraph_text"))
 
-        existing = conn.execute(text("PRAGMA table_info(annotations)")).fetchall()
-        existing_cols = {row[1] for row in existing}
-        if "paragraph_uid" not in existing_cols and "sentence_id" in existing_cols:
+        ann_existing = conn.execute(text("PRAGMA table_info(annotations)")).fetchall()
+        ann_existing_cols = {row[1] for row in ann_existing}
+        if "paragraph_uid" not in ann_existing_cols and "sentence_id" in ann_existing_cols:
             conn.execute(text("ALTER TABLE annotations RENAME COLUMN sentence_id TO paragraph_uid"))
-            existing_cols.remove("sentence_id")
-            existing_cols.add("paragraph_uid")
-
+            ann_existing_cols.remove("sentence_id")
+            ann_existing_cols.add("paragraph_uid")
         for col, coltype in needed_cols.items():
-            if col not in existing_cols:
+            if col not in ann_existing_cols:
                 conn.execute(text(f"ALTER TABLE annotations ADD COLUMN {col} {coltype}"))
 
 
 def on_annotator_change():
-    st.session_state.paragraph_uid = None
+    st.session_state.task_uid = None
 
 
 def seed_tasks_if_empty(df: pd.DataFrame):
-    """
-    Seeds tasks once.
+    uid_col = "sentence_uid" if "sentence_uid" in df.columns else ("paragraph_uid" if "paragraph_uid" in df.columns else ("uid" if "uid" in df.columns else None))
+    text_col = "sentence_text" if "sentence_text" in df.columns else "paragraph_text"
+    if uid_col is None or text_col not in df.columns:
+        raise ValueError("Annotation CSV must include a sentence or paragraph uid and text column.")
 
-    Important:
-    - Uses a paragraph-level uid column as the unique task key
-    """
-    uid_col = "paragraph_uid" if "paragraph_uid" in df.columns else ("uid" if "uid" in df.columns else None)
-    text_col = "paragraph_text" if "paragraph_text" in df.columns else ("sentence_text" if "sentence_text" in df.columns else None)
-    required = {uid_col, text_col, "sentiment"}
-    required.discard(None)
+    required = {uid_col, text_col}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns in CSV: {sorted(missing)}")
@@ -194,12 +173,9 @@ def seed_tasks_if_empty(df: pd.DataFrame):
         n = conn.execute(text("SELECT COUNT(*) FROM tasks")).scalar_one()
         incoming_ids = {str(v) for v in df[uid_col].dropna().astype(str).tolist()}
         if n > 0:
-            existing_ids = {
-                str(row[0]) for row in conn.execute(text("SELECT paragraph_uid FROM tasks")).fetchall()
-            }
+            existing_ids = {str(r[0]) for r in conn.execute(text("SELECT paragraph_uid FROM tasks")).fetchall()}
             if existing_ids == incoming_ids:
                 return
-
             annotation_count = conn.execute(text("SELECT COUNT(*) FROM annotations")).scalar_one()
             if annotation_count == 0:
                 conn.execute(text("DELETE FROM tasks"))
@@ -207,14 +183,21 @@ def seed_tasks_if_empty(df: pd.DataFrame):
                 return
 
         for _, r in df.iterrows():
-            paragraph_uid = r[uid_col]
-            bucket = stable_bucket(paragraph_uid)
-
+            task_uid = str(r[uid_col])
+            bucket = stable_bucket(task_uid)
+            predicted_frames = parse_listish(r.get("matched_categories_str"))
             meta = {
                 k: (None if pd.isna(r[k]) else r[k])
                 for k in df.columns
-                if k not in [uid_col, text_col, "aspect", "sentiment"]
+                if k not in {uid_col, text_col, "sentiment"}
             }
+            meta["task_uid_col"] = uid_col
+            meta["task_text_col"] = text_col
+            meta["predicted_frames"] = predicted_frames
+            meta["predicted_location"] = r.get("llm_location")
+            meta["matched_location"] = r.get("geo_name_matched")
+            meta["paragraph_text"] = r.get("paragraph_text")
+            meta["sentence_text"] = r.get("sentence_text")
 
             conn.execute(
                 text("""
@@ -226,31 +209,27 @@ def seed_tasks_if_empty(df: pd.DataFrame):
                     )
                 """),
                 dict(
-                    paragraph_uid=str(paragraph_uid),
+                    paragraph_uid=task_uid,
                     paragraph_text=str(r[text_col]),
-                    aspect_pred=None if "aspect" not in df.columns or pd.isna(r.get("aspect")) else str(r["aspect"]),
-                    sentiment_pred=None if pd.isna(r["sentiment"]) else str(r["sentiment"]),
+                    aspect_pred=";".join(predicted_frames) if predicted_frames else None,
+                    sentiment_pred=None if pd.isna(r.get("sentiment")) else str(r.get("sentiment")),
                     split_bucket=int(bucket),
                     meta_json=json.dumps(meta, ensure_ascii=False),
-                )
+                ),
             )
 
 
 def assignment_where_clause(user: str) -> str:
     overlap_list = ",".join(str(b) for b in sorted(OVERLAP_BUCKETS))
-
     if user not in ANNOTATORS:
         return "1=0"
-
     if user == "Dekker":
         return f"(t.split_bucket IN ({overlap_list}) OR (t.split_bucket >= 2 AND (t.split_bucket % 2) = 0))"
-    else:
-        return f"(t.split_bucket IN ({overlap_list}) OR (t.split_bucket >= 2 AND (t.split_bucket % 2) = 1))"
+    return f"(t.split_bucket IN ({overlap_list}) OR (t.split_bucket >= 2 AND (t.split_bucket % 2) = 1))"
 
 
-def next_unlabeled_paragraph_uid(user: str):
+def next_unlabeled_task_uid(user: str):
     where_assign = assignment_where_clause(user)
-
     with engine.begin() as conn:
         row = conn.execute(
             text(f"""
@@ -263,65 +242,71 @@ def next_unlabeled_paragraph_uid(user: str):
                 ORDER BY t.paragraph_uid
                 LIMIT 1
             """),
-            dict(user=user)
+            dict(user=user),
         ).first()
-
     return None if row is None else row[0]
 
 
-def load_task(paragraph_uid: str):
+def load_task(task_uid: str):
     with engine.begin() as conn:
-        row = conn.execute(
+        return conn.execute(
             text("""
                 SELECT paragraph_uid, paragraph_text, aspect_pred, sentiment_pred, meta_json, split_bucket
                 FROM tasks
                 WHERE paragraph_uid = :paragraph_uid
             """),
-            dict(paragraph_uid=str(paragraph_uid))
+            dict(paragraph_uid=str(task_uid)),
         ).first()
-    return row
 
 
 def save_annotation(
-    paragraph_uid: str,
+    task_uid: str,
     user: str,
-    sent_ok: bool,
+    geothermal_relevant: bool,
+    sentiment_correct: bool | None,
+    sentiment_true: str,
     matched_categories_present: bool,
-    matched_categories_correct: bool,
+    matched_categories_correct: bool | None,
     matched_categories_true: str,
+    location_correct: bool | None,
+    location_true: str,
     keywords_to_add: str,
-    notes: str
+    notes: str,
 ):
     with engine.begin() as conn:
-        conn.execute(text("""
-            INSERT OR REPLACE INTO annotations
-            (paragraph_uid, annotator, sentiment_correct,
-             matched_categories_present, matched_categories_correct, matched_categories_true,
-             keywords_to_add, notes, created_at)
-            VALUES
-            (:paragraph_uid, :annotator, :sentiment_correct,
-             :matched_categories_present, :matched_categories_correct, :matched_categories_true,
-             :keywords_to_add, :notes, :created_at)
-        """), dict(
-            paragraph_uid=str(paragraph_uid),
-            annotator=user,
-            sentiment_correct=1 if sent_ok else 0,
-            matched_categories_present=1 if matched_categories_present else 0,
-            matched_categories_correct=1 if matched_categories_correct else 0,
-            matched_categories_true=matched_categories_true or None,
-            keywords_to_add=keywords_to_add or None,
-            notes=notes or None,
-            created_at=datetime.utcnow().isoformat(),
-        ))
+        conn.execute(
+            text("""
+                INSERT OR REPLACE INTO annotations
+                (paragraph_uid, annotator, geothermal_relevant, sentiment_correct, sentiment_true,
+                 matched_categories_present, matched_categories_correct, matched_categories_true,
+                 location_correct, location_true, keywords_to_add, notes, created_at)
+                VALUES
+                (:paragraph_uid, :annotator, :geothermal_relevant, :sentiment_correct, :sentiment_true,
+                 :matched_categories_present, :matched_categories_correct, :matched_categories_true,
+                 :location_correct, :location_true, :keywords_to_add, :notes, :created_at)
+            """),
+            dict(
+                paragraph_uid=str(task_uid),
+                annotator=user,
+                geothermal_relevant=1 if geothermal_relevant else 0,
+                sentiment_correct=None if sentiment_correct is None else (1 if sentiment_correct else 0),
+                sentiment_true=sentiment_true or None,
+                matched_categories_present=1 if matched_categories_present else 0,
+                matched_categories_correct=None if matched_categories_correct is None else (1 if matched_categories_correct else 0),
+                matched_categories_true=matched_categories_true or None,
+                location_correct=None if location_correct is None else (1 if location_correct else 0),
+                location_true=location_true or None,
+                keywords_to_add=keywords_to_add or None,
+                notes=notes or None,
+                created_at=datetime.utcnow().isoformat(),
+            ),
+        )
 
 
 def get_progress(user: str):
     where_assign = assignment_where_clause(user)
     with engine.begin() as conn:
-        assigned_total = conn.execute(
-            text(f"SELECT COUNT(*) FROM tasks t WHERE {where_assign}")
-        ).scalar_one()
-
+        assigned_total = conn.execute(text(f"SELECT COUNT(*) FROM tasks t WHERE {where_assign}")).scalar_one()
         done = conn.execute(
             text(f"""
                 SELECT COUNT(*)
@@ -331,36 +316,55 @@ def get_progress(user: str):
                  AND a.annotator = :user
                 WHERE {where_assign}
             """),
-            dict(user=user)
+            dict(user=user),
         ).scalar_one()
-
     remaining = max(0, assigned_total - done)
     frac = 0.0 if assigned_total == 0 else done / assigned_total
     return assigned_total, done, remaining, frac
 
 
-# --- App ---
-st.set_page_config(page_title="Sentiment + category validation", layout="wide")
-st.title("Review tool: sentiment + matched category validation")
+def review_state_key(task_uid: str, name: str) -> str:
+    return f"review_{task_uid}_{name}"
+
+
+def get_review_state(task_uid: str, name: str, default=None):
+    return st.session_state.get(review_state_key(task_uid, name), default)
+
+
+def set_review_state(task_uid: str, name: str, value) -> None:
+    st.session_state[review_state_key(task_uid, name)] = value
+
+
+def clear_review_state(task_uid: str) -> None:
+    prefix = f"review_{task_uid}_"
+    for key in list(st.session_state.keys()):
+        if key.startswith(prefix):
+            del st.session_state[key]
+
+
+def answer_button_row(task_uid: str, field_name: str, prompt: str, options: list[tuple[str, object]]) -> None:
+    st.markdown(f"**{prompt}**")
+    cols = st.columns(len(options))
+    for col, (label, value) in zip(cols, options):
+        if col.button(label, key=review_state_key(task_uid, f"{field_name}_{label}"), use_container_width=True):
+            set_review_state(task_uid, field_name, value)
+            st.rerun()
+
+
+st.set_page_config(page_title="Sentence annotation review", layout="wide")
+st.title("Review tool: geothermal, frame, sentiment, and location validation")
 
 init_db()
 migrate_db()
 
 df = pd.read_csv(DATA_PATH)
 seed_tasks_if_empty(df)
-
 ALL_CATEGORIES = collect_all_categories_from_df(df)
 
-# Top bar
 top_left, top_right = st.columns([2, 1], gap="large")
 
 with top_right:
-    user = st.selectbox(
-        "Annotator",
-        ANNOTATORS,
-        key="annotator",
-        on_change=on_annotator_change
-    )
+    user = st.selectbox("Annotator", ANNOTATORS, key="annotator", on_change=on_annotator_change)
 
 with top_left:
     assigned_total, done, remaining, frac = get_progress(user)
@@ -369,164 +373,212 @@ with top_left:
     st.progress(frac)
     st.write(f"**Progress ({user})**: {done}/{assigned_total} done • {remaining} remaining")
 
-# Find next task
-if "paragraph_uid" not in st.session_state or st.session_state.paragraph_uid is None:
-    st.session_state.paragraph_uid = next_unlabeled_paragraph_uid(user)
+if "task_uid" not in st.session_state or st.session_state.task_uid is None:
+    st.session_state.task_uid = next_unlabeled_task_uid(user)
 
-paragraph_uid = st.session_state.paragraph_uid
-if paragraph_uid is None:
-    st.success("You’re done — no remaining text units assigned to you.")
+task_uid = st.session_state.task_uid
+if task_uid is None:
+    st.success("You’re done. No remaining text units assigned to you.")
     st.stop()
 
-row = load_task(paragraph_uid)
-current_uid, paragraph_text, aspect_pred, sentiment_pred, meta_json, split_bucket = row
-
+row = load_task(task_uid)
+current_uid, task_text, aspect_pred, sentiment_pred, meta_json, split_bucket = row
 meta = json.loads(meta_json) if meta_json else {}
-display_paragraph_id = meta.get("paragraph_id")
-matched_categories_str = meta.get("matched_categories_str")
-matched_keywords_str = meta.get("matched_keywords_str")
 
-matched_categories = parse_listish(matched_categories_str)
-matched_keywords = parse_listish(matched_keywords_str)
-has_matched_category = len(matched_categories) > 0
+sentence_text = meta.get("sentence_text") or task_text
+paragraph_text = meta.get("paragraph_text") or ""
+annotation_id = meta.get("annotation_id")
+predicted_frames = parse_listish(meta.get("matched_categories_str") or aspect_pred)
+predicted_keywords = parse_listish(meta.get("matched_keywords_str"))
+predicted_location = meta.get("predicted_location") or meta.get("llm_location")
+matched_location = meta.get("matched_location") or meta.get("geo_name_matched")
+display_location = matched_location or predicted_location or "None"
 
-# Two-column main layout
 left, right = st.columns([3, 2], gap="large")
 
 with left:
-    st.subheader(f"Paragraph UID: {current_uid}")
-    if display_paragraph_id is not None:
-        st.caption(f"Original paragraph_id: {display_paragraph_id}")
-
-    st.write(paragraph_text)
+    st.subheader(f"Sentence UID: {current_uid}")
+    if annotation_id is not None:
+        st.caption(f"Annotation row: {annotation_id}")
+    st.markdown("### Sentence")
+    st.write(sentence_text)
+    if paragraph_text and paragraph_text != sentence_text:
+        with st.expander("Show paragraph context", expanded=True):
+            st.write(paragraph_text)
 
     st.markdown("### Model output")
-    st.markdown(f"- **Sentiment (pred):** {sentiment_pred}")
-    st.markdown(
-        f"- **Split bucket:** {split_bucket} " + ("(overlap)" if split_bucket in OVERLAP_BUCKETS else "")
-    )
+    st.markdown(f"- **Predicted sentiment:** {sentiment_pred or 'n/a'}")
+    st.markdown(f"- **Predicted frame(s):** {'; '.join(predicted_frames) if predicted_frames else 'none'}")
+    st.markdown(f"- **Matched keyword(s):** {'; '.join(predicted_keywords) if predicted_keywords else 'none'}")
+    st.markdown(f"- **Extracted location from paragraph:** {predicted_location or 'none'}")
+    st.markdown(f"- **Matched geocoded location:** {matched_location or 'none'}")
+    st.markdown(f"- **Split bucket:** {split_bucket} " + ("(overlap)" if split_bucket in OVERLAP_BUCKETS else ""))
 
-    st.markdown("### Category matching helper")
-    if has_matched_category:
-        st.markdown(f"- **Matched categories:** {'; '.join(matched_categories)}")
-    else:
-        st.markdown("- **Matched categories:** none")
-
-    if matched_keywords:
-        st.markdown(f"- **Matched keywords:** {'; '.join(matched_keywords)}")
-    else:
-        st.markdown("- **Matched keywords:** none")
-
-    st.markdown(f"- **Available categories in selector:** {len(ALL_CATEGORIES)}")
-    if ALL_CATEGORIES:
-        with st.expander("Show all available categories", expanded=False):
-            st.write(ALL_CATEGORIES)
-
-    with st.expander("Metadata (optional)", expanded=False):
-        if meta:
-            st.json(meta)
-        else:
-            st.caption("No metadata stored for this paragraph.")
+    with st.expander("Metadata", expanded=False):
+        st.json(meta)
 
 with right:
     st.subheader("Your evaluation")
+    if st.button("Reset Current Review", use_container_width=True, key=f"reset_{current_uid}"):
+        clear_review_state(current_uid)
+        st.rerun()
 
-    sent_ok = st.checkbox("Sentiment is correct", value=True, key=f"sent_ok_{current_uid}")
+    geothermal_relevant = get_review_state(current_uid, "geothermal_relevant")
+    sentiment_correct = get_review_state(current_uid, "sentiment_correct")
+    sentiment_true = get_review_state(current_uid, "sentiment_true", "")
+    matched_categories_correct = get_review_state(current_uid, "matched_categories_correct")
+    matched_categories_true = get_review_state(current_uid, "matched_categories_true", "")
+    keywords_to_add = get_review_state(current_uid, "keywords_to_add", "")
+    location_choice = get_review_state(current_uid, "location_choice")
+    location_true = get_review_state(current_uid, "location_true", "")
+    notes = st.session_state.get(review_state_key(current_uid, "notes"), "")
 
-    sent_true = ""
-    if not sent_ok:
-        sent_true = st.radio(
-            "Correct sentiment",
-            SENTIMENTS,
-            index=1,
-            horizontal=True,
-            key=f"sent_true_{current_uid}"
+    matched_categories_present = bool(predicted_frames)
+    form_complete = False
+
+    if geothermal_relevant is None:
+        answer_button_row(
+            current_uid,
+            "geothermal_relevant",
+            "1. Is this text about geothermal?",
+            [("Yes", True), ("No", False)],
         )
-
-    st.markdown("### Matched category check")
-
-    if has_matched_category:
-        matched_cat_ok = st.radio(
-            "A matched category was found. Is that correct?",
-            ["Yes", "No"],
-            horizontal=True,
-            key=f"matched_cat_ok_{current_uid}"
-        )
-        matched_categories_present = True
-        matched_categories_correct = (matched_cat_ok == "Yes")
     else:
-        no_match_ok = st.radio(
-            "No matched category was found. Is that correct?",
-            ["Yes", "No"],
-            horizontal=True,
-            key=f"no_match_ok_{current_uid}"
-        )
-        matched_categories_present = False
-        matched_categories_correct = (no_match_ok == "Yes")
+        st.caption(f"1. Geothermal: {'Yes' if geothermal_relevant else 'No'}")
 
-    matched_categories_true = ""
-    keywords_to_add = ""
+    if geothermal_relevant is True:
+        if sentiment_correct is None:
+            answer_button_row(
+                current_uid,
+                "sentiment_correct",
+                f"2. Is the sentiment correct? Predicted sentiment: {sentiment_pred or 'none'}",
+                [("Yes", True), ("No", False)],
+            )
+        else:
+            st.caption(f"2. Sentiment correct: {'Yes' if sentiment_correct else 'No'}")
 
-    if not matched_categories_correct:
-        st.caption("Select the correct category/categories from the predefined list.")
+        if sentiment_correct is False and not sentiment_true:
+            answer_button_row(
+                current_uid,
+                "sentiment_true",
+                "Correct sentiment",
+                [(label.capitalize(), label) for label in SENTIMENTS],
+            )
+        elif sentiment_correct is False and sentiment_true:
+            st.caption(f"Correct sentiment: {sentiment_true}")
 
-        selected_categories = st.multiselect(
-            "Correct category/categories",
-            options=ALL_CATEGORIES,
-            default=[],
-            key=f"correct_categories_{current_uid}",
-            help="Choose one or more existing categories."
-        )
-        matched_categories_true = ";".join(selected_categories)
+        sentiment_step_complete = sentiment_correct is True or bool(sentiment_true)
 
-        keywords_to_add = st.text_area(
-            "Keyword(s) that should be added to the keywords list",
-            height=80,
-            key=f"keywords_to_add_{current_uid}",
-            placeholder="e.g. drilling;water pollution;seismic risk"
-        )
+        if sentiment_step_complete:
+            if matched_categories_correct is None:
+                answer_button_row(
+                    current_uid,
+                    "matched_categories_correct",
+                    (
+                        f"3. Are the predicted frame(s) correct? Predicted frame(s): {'; '.join(predicted_frames)}"
+                        if predicted_frames
+                        else "3. No frame was predicted. Is that correct?"
+                    ),
+                    [("Yes", True), ("No", False)],
+                )
+            else:
+                st.caption(f"3. Frame correct: {'Yes' if matched_categories_correct else 'No'}")
 
-    notes = st.text_area(
-        "Notes (optional)",
-        height=90,
-        key=f"notes_{current_uid}",
-        placeholder="Optional notes, including corrected sentiment if needed."
-    )
+        if matched_categories_correct is False and not matched_categories_true:
+            selected_categories = st.multiselect(
+                "Correct frame(s)",
+                options=ALL_CATEGORIES,
+                default=parse_listish(st.session_state.get(review_state_key(current_uid, "frame_selection"), "")),
+                key=review_state_key(current_uid, "frame_selection"),
+            )
+            keyword_value = st.text_area(
+                "Keyword(s) to add to the frame list",
+                height=80,
+                key=review_state_key(current_uid, "frame_keywords_input"),
+                placeholder="e.g. vergunning;subsidie;aardbeving",
+            )
+            if st.button("Confirm Frame Correction", use_container_width=True, key=f"confirm_frame_{current_uid}"):
+                set_review_state(current_uid, "matched_categories_true", ";".join(selected_categories))
+                set_review_state(current_uid, "keywords_to_add", keyword_value)
+                st.rerun()
+        elif matched_categories_correct is False and matched_categories_true:
+            st.caption(f"Correct frame(s): {matched_categories_true}")
 
-    if not sent_ok and sent_true:
-        notes_prefix = f"[Correct sentiment: {sent_true}]"
+        frame_step_complete = matched_categories_correct is True or bool(matched_categories_true)
+        next_location_number = 4
+    elif geothermal_relevant is False:
+        sentiment_step_complete = True
+        frame_step_complete = True
+        next_location_number = 2
     else:
-        notes_prefix = ""
+        sentiment_step_complete = False
+        frame_step_complete = False
+        next_location_number = 0
 
-    notes_to_save = f"{notes_prefix}\n{notes}".strip() if notes_prefix else notes
-
-    b1, b2 = st.columns(2)
-
-    with b1:
-        if st.button("Save", use_container_width=True, key=f"save_{current_uid}"):
-            save_annotation(
+    if geothermal_relevant is not None and sentiment_step_complete and frame_step_complete:
+        if location_choice is None:
+            answer_button_row(
                 current_uid,
-                user,
-                sent_ok,
-                matched_categories_present,
-                matched_categories_correct,
-                matched_categories_true,
-                keywords_to_add,
-                notes_to_save
+                "location_choice",
+                f"{next_location_number}. Is the extracted paragraph location correct? Predicted location: {predicted_location or 'none'}",
+                [("Yes", "yes"), ("No", "no"), ("No Location", "na")],
             )
-            st.success("Saved.")
+        else:
+            location_labels = {"yes": "Yes", "no": "No", "na": "No location available"}
+            st.caption(f"{next_location_number}. Location correct: {location_labels.get(location_choice, location_choice)}")
 
-    with b2:
-        if st.button("Save & Next ➜", use_container_width=True, key=f"save_next_{current_uid}"):
-            save_annotation(
-                current_uid,
-                user,
-                sent_ok,
-                matched_categories_present,
-                matched_categories_correct,
-                matched_categories_true,
-                keywords_to_add,
-                notes_to_save
-            )
-            st.session_state.paragraph_uid = next_unlabeled_paragraph_uid(user)
-            st.rerun()
+    if location_choice == "no" and not location_true:
+        entered_location = st.text_input(
+            "Correct location",
+            key=review_state_key(current_uid, "location_input"),
+            placeholder="e.g. Westland; Zuid-Holland; Nederland",
+        )
+        if st.button("Confirm Location Correction", use_container_width=True, key=f"confirm_location_{current_uid}"):
+            if entered_location.strip():
+                set_review_state(current_uid, "location_true", entered_location.strip())
+                st.rerun()
+    elif location_choice == "no" and location_true:
+        st.caption(f"Correct location: {location_true}")
+
+    location_complete = location_choice in {"yes", "na"} or (location_choice == "no" and bool(location_true))
+
+    if geothermal_relevant is not None and sentiment_step_complete and frame_step_complete and location_complete:
+        notes_number = 5 if geothermal_relevant else 3
+        st.markdown(f"**{notes_number}. Notes**")
+        notes = st.text_area(
+            "Optional notes",
+            height=120,
+            key=review_state_key(current_uid, "notes"),
+            placeholder="Optional notes on geothermal relevance, frame, sentiment, or location.",
+            label_visibility="collapsed",
+        )
+        form_complete = True
+
+    if form_complete:
+        location_correct = True if location_choice == "yes" else (False if location_choice == "no" else None)
+        save_payload = dict(
+            task_uid=current_uid,
+            user=user,
+            geothermal_relevant=geothermal_relevant,
+            sentiment_correct=sentiment_correct,
+            sentiment_true=sentiment_true,
+            matched_categories_present=matched_categories_present,
+            matched_categories_correct=matched_categories_correct,
+            matched_categories_true=matched_categories_true,
+            location_correct=location_correct,
+            location_true=location_true,
+            keywords_to_add=keywords_to_add,
+            notes=notes,
+        )
+
+        b1, b2 = st.columns(2)
+        with b1:
+            if st.button("Save", use_container_width=True, key=f"save_{current_uid}"):
+                save_annotation(**save_payload)
+                st.success("Saved.")
+        with b2:
+            if st.button("Save & Next", use_container_width=True, key=f"save_next_{current_uid}"):
+                save_annotation(**save_payload)
+                clear_review_state(current_uid)
+                st.session_state.task_uid = next_unlabeled_task_uid(user)
+                st.rerun()

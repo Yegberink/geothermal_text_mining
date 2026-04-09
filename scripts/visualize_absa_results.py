@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+from html import escape
 from pathlib import Path
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import pandas as pd
+import plotly.graph_objects as go
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
@@ -23,8 +26,8 @@ SENTIMENT_COLORS = {
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--admin-csv", type=str, default="output/text/paragraphs_with_categories_admin.csv")
-    ap.add_argument("--categories-csv", type=str, default="output/text/paragraphs_with_categories_short.csv")
+    ap.add_argument("--admin-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
+    ap.add_argument("--categories-csv", type=str, default="output/text/sentences_with_categories_short.csv")
     ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
     ap.add_argument("--output-dir", type=str, default="output/figures")
     return ap.parse_args()
@@ -41,6 +44,10 @@ def normalize_sentiment(series: pd.Series) -> pd.Series:
         "neutral/uncertain": "neutral",
     }
     return series.astype(str).str.strip().str.lower().map(mapping)
+
+
+def text_unit_label(df: pd.DataFrame) -> str:
+    return "sentences" if "sentence_text" in df.columns else "paragraphs"
 
 
 def configure_plot_style() -> None:
@@ -81,13 +88,13 @@ def build_province_summary(admin_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    grouped["n_paragraphs"] = grouped["n_neg"] + grouped["n_neu"] + grouped["n_pos"]
-    denom = grouped["n_paragraphs"].replace({0: pd.NA})
+    grouped["n_text_units"] = grouped["n_neg"] + grouped["n_neu"] + grouped["n_pos"]
+    denom = grouped["n_text_units"].replace({0: pd.NA})
     grouped["pct_neg"] = 100 * grouped["n_neg"] / denom
     grouped["pct_neu"] = 100 * grouped["n_neu"] / denom
     grouped["pct_pos"] = 100 * grouped["n_pos"] / denom
     grouped["polarity_balance"] = grouped["pct_pos"] - grouped["pct_neg"]
-    grouped = grouped.sort_values(["n_paragraphs", "province_name"], ascending=[False, True]).reset_index(drop=True)
+    grouped = grouped.sort_values(["n_text_units", "province_name"], ascending=[False, True]).reset_index(drop=True)
     return grouped
 
 
@@ -116,7 +123,7 @@ def plot_province_sentiment_balance(province_tbl: pd.DataFrame, out_path: Path) 
     )
 
     ax.axvline(0, color="black", linewidth=0.8)
-    ax.set_xlabel("Percentage of paragraphs")
+    ax.set_xlabel("Percentage of sentences")
     ax.set_title("Sentiment per province")
 
     for spine in ax.spines.values():
@@ -165,7 +172,7 @@ def plot_province_stacked_distribution(province_tbl: pd.DataFrame, out_path: Pat
         bottom += plot_data[sentiment]
 
     ax.set_xlabel("Province")
-    ax.set_ylabel("Percentage of paragraphs")
+    ax.set_ylabel("Percentage of sentences")
     ax.spines["top"].set_visible(True)
     ax.spines["right"].set_visible(True)
     ax.set_axisbelow(True)
@@ -212,6 +219,7 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
     all_sentiments = all_sentiments[all_sentiments["_sent"].isin(SENTIMENT_ORDER)]
     overall_counts = all_sentiments["_sent"].value_counts().reindex(SENTIMENT_ORDER, fill_value=0)
     overall_percent = (overall_counts / overall_counts.sum()) * 100
+    unit_label = text_unit_label(categories_df)
 
     df = categories_df[[category_col, sentiment_col]].copy().dropna(subset=[category_col, sentiment_col])
     df["category"] = df[category_col].astype(str).str.split(";")
@@ -230,8 +238,9 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
     sentiment_counts["total"] = sentiment_counts.sum(axis=1)
     sentiment_counts = sentiment_counts.sort_values("total", ascending=False)
     plot_data = sentiment_counts.drop(columns="total").div(sentiment_counts["total"], axis=0) * 100
-    plot_data.loc["All paragraphs"] = overall_percent
-    plot_data = plot_data.loc[["All paragraphs"] + [idx for idx in plot_data.index if idx != "All paragraphs"]]
+    all_label = f"All {unit_label}"
+    plot_data.loc[all_label] = overall_percent
+    plot_data = plot_data.loc[[all_label] + [idx for idx in plot_data.index if idx != all_label]]
 
     configure_plot_style()
     fig, ax = plt.subplots(figsize=(9.5, 6), dpi=300)
@@ -249,7 +258,7 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
         )
         bottom += plot_data[sentiment]
 
-    ax.set_ylabel("Percentage of paragraphs")
+    ax.set_ylabel("Percentage of sentences")
     ax.set_ylim(0, 100)
     ax.margins(y=0)
     for spine in ax.spines.values():
@@ -273,7 +282,14 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
     plt.close(fig)
 
 
-def plot_locations_heatmap(
+def truncate_text(text: str, limit: int = 220) -> str:
+    text = str(text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "..."
+
+
+def plot_locations_interactive(
     admin_df: pd.DataFrame,
     province_gpkg: Path,
     out_path: Path,
@@ -288,80 +304,199 @@ def plot_locations_heatmap(
     points_df["lat"] = pd.to_numeric(points_df["lat"], errors="coerce")
     points_df = points_df.dropna(subset=["lon", "lat"]).copy()
     if points_df.empty:
-        raise ValueError("No valid lon/lat rows available for location heatmap.")
+        raise ValueError("No valid lon/lat rows available for interactive location map.")
+
+    text_col = "sentence_text" if "sentence_text" in points_df.columns else "paragraph_text"
+    if text_col not in points_df.columns:
+        raise ValueError("Expected either 'sentence_text' or 'paragraph_text' in administrative CSV.")
+
+    points_df["matched_location_display"] = (
+        points_df.get("geo_name_matched", pd.Series(index=points_df.index, dtype=object))
+        .fillna(points_df.get("llm_location", pd.Series(index=points_df.index, dtype=object)))
+        .fillna("Unknown location")
+        .astype(str)
+    )
+    points_df["text_display"] = points_df[text_col].fillna("").astype(str)
+    points_df["text_preview"] = points_df["text_display"].map(truncate_text)
+    points_df["sentiment_display"] = (
+        normalize_sentiment(points_df["sentiment"])
+        if "sentiment" in points_df.columns
+        else pd.Series([""] * len(points_df), index=points_df.index)
+    ).fillna("")
+    points_df["frame_display"] = points_df.get("matched_categories_str", pd.Series(index=points_df.index, dtype=object)).fillna("").astype(str)
 
     provinces = gpd.read_file(province_gpkg)
     if provinces.crs is None:
         raise ValueError("Province GeoPackage must have a CRS.")
     provinces = provinces.to_crs("EPSG:4326")
-    provinces["_label_point"] = provinces.geometry.representative_point()
+    provinces = provinces.reset_index(drop=True).copy()
+    provinces["_feature_id"] = provinces.index.astype(str)
+    provinces_json = json.loads(provinces.to_json())
 
-    configure_plot_style()
-    fig, ax = plt.subplots(figsize=(8.8, 10.2), dpi=250)
-    fig.patch.set_facecolor("#f6f1e8")
-    ax.set_facecolor("#f6f1e8")
+    marker_colors = {
+        "negative": "#D55E00",
+        "neutral": "#999999",
+        "positive": "#009E73",
+        "": "#c75b39",
+    }
+    points_df["marker_color"] = points_df["sentiment_display"].map(marker_colors).fillna("#c75b39")
 
-    provinces.plot(
-        ax=ax,
-        color="#efe5d2",
-        edgecolor="#ffffff",
-        linewidth=1.0,
-        alpha=1.0,
-        zorder=0,
+    fig = go.Figure()
+    fig.add_trace(
+        go.Choropleth(
+            geojson=provinces_json,
+            featureidkey="properties._feature_id",
+            locations=provinces["_feature_id"],
+            z=[1] * len(provinces),
+            colorscale=[[0, "#efe5d2"], [1, "#efe5d2"]],
+            showscale=False,
+            marker_line_color="#ffffff",
+            marker_line_width=1.1,
+            hoverinfo="skip",
+            name="Provinces",
+        )
     )
-    provinces.boundary.plot(ax=ax, color="#53483d", linewidth=0.9, alpha=0.7, zorder=2)
-
-    ax.scatter(
-        points_df["lon"],
-        points_df["lat"],
-        s=16,
-        c="#c75b39",
-        alpha=0.55,
-        edgecolors="white",
-        linewidths=0.25,
-        zorder=1.5,
+    fig.add_trace(
+        go.Scattergeo(
+            lon=points_df["lon"],
+            lat=points_df["lat"],
+            mode="markers",
+            marker=dict(
+                size=8,
+                color=points_df["marker_color"],
+                opacity=0.72,
+                line=dict(color="#ffffff", width=0.6),
+            ),
+            customdata=points_df[
+                ["matched_location_display", "text_display", "frame_display", "sentiment_display", "text_preview"]
+            ].values,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "Sentiment: %{customdata[3]}<br>"
+                "Frames: %{customdata[2]}<br>"
+                "%{customdata[4]}"
+                "<extra></extra>"
+            ),
+            name="Matched locations",
+        )
     )
 
     xmin, ymin, xmax, ymax = provinces.total_bounds
     xpad = (xmax - xmin) * 0.04
     ypad = (ymax - ymin) * 0.04
-    ax.set_xlim(xmin - xpad, xmax + xpad)
-    ax.set_ylim(ymin - ypad, ymax + ypad)
-    ax.set_xlabel("")
-    ax.set_ylabel("")
-    ax.set_title("Plotted locations")
-    ax.set_aspect("equal")
-    ax.grid(False)
 
-    name_col = None
-    for cand in ["statnaam", "prov_name", "name", "naam", "provincie_naam"]:
-        if cand in provinces.columns:
-            name_col = cand
-            break
-    if name_col is not None:
-        for _, row in provinces.iterrows():
-            point = row["_label_point"]
-            ax.text(
-                point.x,
-                point.y,
-                str(row[name_col]),
-                fontsize=8.5,
-                color="#53483d",
-                ha="center",
-                va="center",
-                zorder=3,
-                bbox=dict(boxstyle="round,pad=0.18", fc=(246/255, 241/255, 232/255, 0.72), ec="none"),
-            )
+    fig.update_geos(
+        fitbounds=False,
+        showcountries=False,
+        showcoastlines=False,
+        showland=False,
+        showocean=False,
+        showlakes=False,
+        showrivers=False,
+        bgcolor="#f6f1e8",
+        lonaxis_range=[xmin - xpad, xmax + xpad],
+        lataxis_range=[ymin - ypad, ymax + ypad],
+        projection_type="mercator",
+    )
+    fig.update_layout(
+        title="Interactive matched locations",
+        paper_bgcolor="#f6f1e8",
+        plot_bgcolor="#f6f1e8",
+        margin=dict(l=20, r=20, t=60, b=20),
+        height=860,
+    )
 
-    ax.set_xticks([])
-    ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_visible(False)
+    plot_div_id = "location-map"
+    details_div_id = "location-details"
+    fig_html = fig.to_html(
+        full_html=False,
+        include_plotlyjs=True,
+        div_id=plot_div_id,
+        post_script=f"""
+const plot = document.getElementById('{plot_div_id}');
+const details = document.getElementById('{details_div_id}');
+if (plot) {{
+  plot.on('plotly_click', function(event) {{
+    const point = event.points && event.points[0];
+    if (!point || !point.customdata) return;
+    const location = point.customdata[0] || 'Unknown location';
+    const text = point.customdata[1] || '';
+    const frame = point.customdata[2] || '';
+    const sentiment = point.customdata[3] || '';
+    details.innerHTML = `
+      <h3>${{location}}</h3>
+      <p><strong>Sentiment:</strong> ${{sentiment || 'n/a'}}</p>
+      <p><strong>Frames:</strong> ${{frame || 'n/a'}}</p>
+      <p>${{text}}</p>
+    `;
+  }});
+}}
+""",
+    )
 
-    plt.tight_layout()
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Interactive matched locations</title>
+  <style>
+    body {{
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      background: #f6f1e8;
+      color: #3d342b;
+    }}
+    .layout {{
+      display: grid;
+      grid-template-columns: minmax(0, 2.2fr) minmax(320px, 1fr);
+      gap: 18px;
+      padding: 18px;
+      align-items: start;
+    }}
+    .panel {{
+      background: rgba(255,255,255,0.55);
+      border: 1px solid rgba(83,72,61,0.18);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(61,52,43,0.08);
+      overflow: hidden;
+    }}
+    .details {{
+      padding: 18px 20px;
+      position: sticky;
+      top: 18px;
+      min-height: 200px;
+    }}
+    .details h2, .details h3 {{
+      margin: 0 0 12px 0;
+      font-weight: 600;
+    }}
+    .details p {{
+      margin: 0 0 12px 0;
+      line-height: 1.5;
+    }}
+    @media (max-width: 900px) {{
+      .layout {{
+        grid-template-columns: 1fr;
+      }}
+      .details {{
+        position: static;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="panel">{fig_html}</div>
+    <div class="panel details" id="{details_div_id}">
+      <h2>Matched text</h2>
+      <p>Hover over a point to inspect the matched location. Click a point to load the full text here.</p>
+    </div>
+  </div>
+</body>
+</html>
+"""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, bbox_inches="tight")
-    plt.close(fig)
+    out_path.write_text(html, encoding="utf-8")
 
 
 def main() -> None:
@@ -391,17 +526,17 @@ def main() -> None:
         categories_df,
         output_dir / "categories_sentiment_distribution.png",
     )
-    plot_locations_heatmap(
+    plot_locations_interactive(
         admin_df,
         province_gpkg,
-        output_dir / "locations_heatmap.png",
+        output_dir / "locations_map.html",
     )
 
     print("Wrote:", output_dir / "province_sentiment_table.csv")
     print("Wrote:", output_dir / "provinces_sentiment_balance.png")
     print("Wrote:", output_dir / "provinces_sentiment_distribution.png")
     print("Wrote:", output_dir / "categories_sentiment_distribution.png")
-    print("Wrote:", output_dir / "locations_heatmap.png")
+    print("Wrote:", output_dir / "locations_map.html")
 
 
 if __name__ == "__main__":

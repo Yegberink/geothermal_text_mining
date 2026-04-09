@@ -66,9 +66,13 @@ ollama:
   url: http://localhost:11434/api/generate
   location_model: llama3.1:8b
   geothermal_model: llama3.1:8b
-  sentiment_model: llama3.1:8b
   save_every: 25
   sleep_s: 0.0
+
+sentiment_hf:
+  model: nlptown/bert-base-multilingual-uncased-sentiment
+  batch_size: 32
+  max_length: 256
 
 online_geocoding:
   country_codes: ""
@@ -95,23 +99,26 @@ paths:
   paragraphs_csv: output/text/newspapers_cleaned_paragraphs.csv
   paragraph_locations_csv: output/text/paragraph_locations_ollama.csv
   paragraph_geothermal_csv: output/text/paragraph_geothermal_ollama.csv
-  paragraph_sentiment_csv: output/text/paragraph_sentiment_llm.csv
-  paragraphs_with_geo_offline_gpkg: output/text/paragraphs_with_geo_offline.gpkg
-  paragraphs_with_geo_gpkg: output/text/paragraphs_with_geo.gpkg
-  paragraph_offline_geocoding_csv: output/text/paragraph_offline_geocoding.csv
+  sentence_locations_csv: output/text/sentence_locations_ollama.csv
+  sentences_with_frames_long_csv: output/text/sentences_with_frames_long.csv
+  sentences_with_frames_short_csv: output/text/sentences_with_frames_short.csv
+  sentence_sentiment_csv: output/text/sentence_sentiment_llm.csv
+  sentences_with_geo_offline_gpkg: output/text/sentences_with_geo_offline.gpkg
+  sentences_with_geo_gpkg: output/text/sentences_with_geo.gpkg
+  sentence_offline_geocoding_csv: output/text/sentence_offline_geocoding.csv
   nominatim_cache_json: cache/nominatim_cache.json
-  paragraphs_with_categories_gpkg: output/text/paragraphs_with_categories.gpkg
-  paragraphs_with_categories_long_csv: output/text/paragraphs_with_categories_long.csv
-  paragraphs_with_categories_short_csv: output/text/paragraphs_with_categories_short.csv
-  paragraphs_with_categories_admin_gpkg: output/text/paragraphs_with_categories_admin.gpkg
-  paragraphs_with_categories_admin_csv: output/text/paragraphs_with_categories_admin.csv
+  sentences_with_categories_gpkg: output/text/sentences_with_categories.gpkg
+  sentences_with_categories_long_csv: output/text/sentences_with_categories_long.csv
+  sentences_with_categories_short_csv: output/text/sentences_with_categories_short.csv
+  sentences_with_categories_admin_gpkg: output/text/sentences_with_categories_admin.gpkg
+  sentences_with_categories_admin_csv: output/text/sentences_with_categories_admin.csv
   figures_dir: output/figures
   province_sentiment_table_csv: output/figures/province_sentiment_table.csv
   provinces_sentiment_balance_png: output/figures/provinces_sentiment_balance.png
   provinces_sentiment_distribution_png: output/figures/provinces_sentiment_distribution.png
   categories_sentiment_distribution_png: output/figures/categories_sentiment_distribution.png
-  locations_heatmap_png: output/figures/locations_heatmap.png
-  annotation_paragraphs_csv: annotation/paragraphs_for_annotation.csv
+  locations_map_html: output/figures/locations_map.html
+  annotation_sentences_csv: annotation/sentences_for_annotation.csv
 
   geo_checkpoint: cache/geo_checkpoint.parquet
   geo_cache: cache/geo_cache.jsonl
@@ -119,6 +126,6 @@ paths:
   geo_class_checkpoint: cache/geo_class_checkpoint.parquet
   geo_class_cache: cache/geo_class_cache.jsonl
   geo_class_partial_csv: cache/geo_class_partial_results.csv
-  sentiment_checkpoint: cache/sentiment_checkpoint.parquet
-  sentiment_cache: cache/sentiment_cache.jsonl
-  sentiment_partial_csv: cache/sentiment_partial_results.csv
+  sentence_sentiment_checkpoint: cache/sentence_sentiment_hf_checkpoint.parquet
+  sentence_sentiment_cache: cache/sentence_sentiment_hf_cache.jsonl
+  sentence_sentiment_partial_csv: cache/sentence_sentiment_hf_partial_results.csv

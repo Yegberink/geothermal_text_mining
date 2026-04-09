@@ -25,10 +25,10 @@ DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_offline_geocoding.csv")
+    ap.add_argument("--input-csv", type=str, default="output/text/sentence_offline_geocoding.csv")
     ap.add_argument("--municipality-gpkg", type=str, default="data/dutch/admin_areas_municipalities_2025.gpkg")
     ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
-    ap.add_argument("--output-gpkg", type=str, default="output/text/paragraphs_with_geo.gpkg")
+    ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_geo.gpkg")
     ap.add_argument("--cache-path", type=str, default="cache/nominatim_cache.json")
     ap.add_argument("--country", type=str, default="Netherlands")
     ap.add_argument("--country-codes", type=str, default="")
@@ -42,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--jitter", type=float, default=0.25)
     ap.add_argument("--max-queries", type=int, default=0)
     ap.add_argument("--attach-admin-polygons-for-city-site", action="store_true")
+    ap.add_argument("--points-layer", type=str, default="sentences_points")
+    ap.add_argument("--polygons-layer", type=str, default="sentences_polygons")
     return ap.parse_args()
 
 
@@ -135,7 +137,7 @@ def bias_query(q: str, country: str) -> str:
     return f"{q}, {country}" if country else q
 
 
-def build_output_gpkg(df: pd.DataFrame, output_gpkg: Path) -> None:
+def build_output_gpkg(df: pd.DataFrame, output_gpkg: Path, points_layer: str, polygons_layer: str) -> None:
     output_gpkg.parent.mkdir(parents=True, exist_ok=True)
     if output_gpkg.exists():
         output_gpkg.unlink()
@@ -146,7 +148,7 @@ def build_output_gpkg(df: pd.DataFrame, output_gpkg: Path) -> None:
         geometry=gpd.GeoSeries.from_wkt(df_points["geom_point_wkt"]),
         crs="EPSG:4326",
     )
-    gdf_points.to_file(output_gpkg, layer="paragraphs_points", driver="GPKG")
+    gdf_points.to_file(output_gpkg, layer=points_layer, driver="GPKG")
 
     df_polys = df[df["geom_poly_wkt"].notna()].copy()
     gdf_polys = gpd.GeoDataFrame(
@@ -154,7 +156,7 @@ def build_output_gpkg(df: pd.DataFrame, output_gpkg: Path) -> None:
         geometry=gpd.GeoSeries.from_wkt(df_polys["geom_poly_wkt"]),
         crs="EPSG:4326",
     )
-    gdf_polys.to_file(output_gpkg, layer="paragraphs_polygons", driver="GPKG")
+    gdf_polys.to_file(output_gpkg, layer=polygons_layer, driver="GPKG")
 
 
 def main() -> None:
@@ -375,9 +377,9 @@ def main() -> None:
     print("\nAfter online matching:")
     print(diag)
 
-    build_output_gpkg(df, output_gpkg)
+    build_output_gpkg(df, output_gpkg, args.points_layer, args.polygons_layer)
     print("\nWrote GeoPackage:", output_gpkg)
-    print("Layers: paragraphs_points, paragraphs_polygons")
+    print(f"Layers: {args.points_layer}, {args.polygons_layer}")
 
 
 if __name__ == "__main__":

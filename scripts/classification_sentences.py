@@ -3,8 +3,12 @@ import os
 import re
 from pathlib import Path
 
-import geopandas as gpd
 import pandas as pd
+
+try:
+    import geopandas as gpd
+except ImportError:
+    gpd = None
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
@@ -12,13 +16,21 @@ DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-gpkg", type=str, default="output/text/paragraphs_with_geo.gpkg")
+    ap.add_argument("--input-csv", type=str, default="")
+    ap.add_argument("--input-gpkg", type=str, default="")
+    ap.add_argument("--input-point-layer", type=str, default="sentences_points")
+    ap.add_argument("--input-polygon-layer", type=str, default="sentences_polygons")
     ap.add_argument("--keywords-csv", type=str, default="vocab/keywords_topics.csv")
-    ap.add_argument("--output-gpkg", type=str, default="output/text/paragraphs_with_categories.gpkg")
-    ap.add_argument("--output-layer", type=str, default="paragraphs_with_categories")
-    ap.add_argument("--output-long-csv", type=str, default="output/text/paragraphs_with_categories_long.csv")
-    ap.add_argument("--output-short-csv", type=str, default="output/text/paragraphs_with_categories_short.csv")
+    ap.add_argument("--output-gpkg", type=str, default="")
+    ap.add_argument("--output-layer", type=str, default="sentences_with_categories")
+    ap.add_argument("--output-long-csv", type=str, default="output/text/sentences_with_categories_long.csv")
+    ap.add_argument("--output-short-csv", type=str, default="output/text/sentences_with_categories_short.csv")
+    ap.add_argument("--keep-only-matched", type=str, default="False")
     return ap.parse_args()
+
+
+def parse_bool(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def hits_to_keywords_only_str(d):
@@ -39,20 +51,29 @@ def main():
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
 
-    output_gpkg = Path(args.output_gpkg)
     output_long_csv = Path(args.output_long_csv)
     output_short_csv = Path(args.output_short_csv)
-    output_gpkg.parent.mkdir(parents=True, exist_ok=True)
     output_long_csv.parent.mkdir(parents=True, exist_ok=True)
     output_short_csv.parent.mkdir(parents=True, exist_ok=True)
+    keep_only_matched = parse_bool(args.keep_only_matched)
 
-    points_gdf = gpd.read_file(args.input_gpkg, layer="paragraphs_points")
-    polys_gdf = gpd.read_file(args.input_gpkg, layer="paragraphs_polygons")
-    points_gdf["source_layer"] = "paragraphs_points"
-    polys_gdf["source_layer"] = "paragraphs_polygons"
-
-    text_gdf = pd.concat([points_gdf, polys_gdf], ignore_index=True)
-    text_gdf = gpd.GeoDataFrame(text_gdf, geometry="geometry", crs=points_gdf.crs)
+    if args.input_csv:
+        text_gdf = pd.read_csv(args.input_csv)
+        crs = None
+        has_geometry = False
+    elif args.input_gpkg:
+        if gpd is None:
+            raise ImportError("geopandas is required when using --input-gpkg.")
+        points_gdf = gpd.read_file(args.input_gpkg, layer=args.input_point_layer)
+        polys_gdf = gpd.read_file(args.input_gpkg, layer=args.input_polygon_layer)
+        points_gdf["source_layer"] = args.input_point_layer
+        polys_gdf["source_layer"] = args.input_polygon_layer
+        text_gdf = pd.concat([points_gdf, polys_gdf], ignore_index=True)
+        text_gdf = gpd.GeoDataFrame(text_gdf, geometry="geometry", crs=points_gdf.crs)
+        crs = points_gdf.crs
+        has_geometry = True
+    else:
+        raise ValueError("Provide either --input-csv or --input-gpkg.")
 
     keyword_categories = pd.read_csv(args.keywords_csv)
     keyword_categories = keyword_categories.loc[
@@ -63,8 +84,8 @@ def main():
     duplicates = all_keywords[all_keywords.duplicated()]
     print(duplicates)
 
-    text_col = "paragraph_text" if "paragraph_text" in text_gdf.columns else "sentence_text"
-    uid_col = "uid" if "uid" in text_gdf.columns else "sentence_uid"
+    text_col = "sentence_text" if "sentence_text" in text_gdf.columns else "paragraph_text"
+    uid_col = "sentence_uid" if "sentence_uid" in text_gdf.columns else "uid"
     text = text_gdf[text_col].astype(str).str.lower()
 
     cat2keywords = {}
@@ -118,33 +139,41 @@ def main():
     text_gdf = text_gdf.drop(columns=["matched_categories", "matched_keywords"])
 
     text_gdf["_text_norm"] = text_gdf[text_col].astype(str).str.strip().str.lower()
-    text_gdf["geom_priority"] = text_gdf["source_layer"].map({
-        "paragraphs_polygons": 1,
-        "paragraphs_points": 2,
-    })
+    if "source_layer" in text_gdf.columns:
+        text_gdf["geom_priority"] = text_gdf["source_layer"].map({
+            args.input_polygon_layer: 1,
+            args.input_point_layer: 2,
+        }).fillna(99)
+    else:
+        text_gdf["geom_priority"] = 1
 
     dedupe_col = uid_col if uid_col in text_gdf.columns else "_text_norm"
-    text_unique = (
+    text_out = (
         text_gdf.sort_values([dedupe_col, "geom_priority"])
         .drop_duplicates(subset=[dedupe_col], keep="first")
         .copy()
     )
-    text_unique = text_unique.drop(columns=["_text_norm", "geom_priority"])
-    text_unique = gpd.GeoDataFrame(
-        text_unique,
-        geometry="geometry",
-        crs=text_gdf.crs,
-    )
+    text_out = text_out.drop(columns=["_text_norm", "geom_priority"])
+    if keep_only_matched:
+        text_out = text_out[text_out["n_categories"].fillna(0).astype(int) > 0].copy()
 
-    text_unique.to_file(output_gpkg, layer=args.output_layer, driver="GPKG")
+    if has_geometry and args.output_gpkg:
+        output_gpkg = Path(args.output_gpkg)
+        output_gpkg.parent.mkdir(parents=True, exist_ok=True)
+        text_out = gpd.GeoDataFrame(
+            text_out,
+            geometry="geometry",
+            crs=crs,
+        )
+        text_out.to_file(output_gpkg, layer=args.output_layer, driver="GPKG")
 
-    short_cols = [text_col, "matched_keywords_str", "matched_categories_str", "sentiment", "source_layer"]
-    short_cols = [c for c in short_cols if c in text_unique.columns]
-    text_small = text_unique[short_cols].copy()
-    text_unique.to_csv(output_long_csv, index=False)
+    short_cols = [text_col, "matched_keywords_str", "matched_categories_str", "sentiment", "source_layer", "sentence_uid"]
+    short_cols = [c for c in short_cols if c in text_out.columns]
+    text_small = text_out[short_cols].copy()
+    text_out.to_csv(output_long_csv, index=False)
     text_small.to_csv(output_short_csv, index=False)
 
-    print(len(text_unique), "unique text units processed and saved.")
+    print(len(text_out), "unique text units processed and saved.")
 
 
 if __name__ == "__main__":

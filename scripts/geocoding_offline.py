@@ -36,11 +36,13 @@ ALIAS_MAP = {
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_sentiment_llm.csv")
+    ap.add_argument("--input-csv", type=str, default="output/text/sentence_sentiment_llm.csv")
     ap.add_argument("--municipality-gpkg", type=str, default="data/dutch/admin_areas_municipalities_2025.gpkg")
     ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
-    ap.add_argument("--output-gpkg", type=str, default="output/text/paragraphs_with_geo_offline.gpkg")
-    ap.add_argument("--output-csv", type=str, default="output/text/paragraph_offline_geocoding.csv")
+    ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_geo_offline.gpkg")
+    ap.add_argument("--output-csv", type=str, default="output/text/sentence_offline_geocoding.csv")
+    ap.add_argument("--points-layer", type=str, default="sentences_points")
+    ap.add_argument("--polygons-layer", type=str, default="sentences_polygons")
     return ap.parse_args()
 
 
@@ -334,7 +336,7 @@ def main():
         geometry=gpd.GeoSeries.from_wkt(df_points["geom_point_wkt"]),
         crs="EPSG:4326",
     )
-    gdf_points.to_file(args.output_gpkg, layer="paragraphs_points", driver="GPKG")
+    gdf_points.to_file(args.output_gpkg, layer=args.points_layer, driver="GPKG")
 
     df_polys = df[df["geom_poly_wkt"].notna()].copy()
     gdf_polys = gpd.GeoDataFrame(
@@ -342,11 +344,11 @@ def main():
         geometry=gpd.GeoSeries.from_wkt(df_polys["geom_poly_wkt"]),
         crs="EPSG:4326",
     )
-    gdf_polys.to_file(args.output_gpkg, layer="paragraphs_polygons", driver="GPKG")
+    gdf_polys.to_file(args.output_gpkg, layer=args.polygons_layer, driver="GPKG")
     df.to_csv(args.output_csv, index=False, encoding="utf-8")
 
     print("\nWrote GeoPackage:", args.output_gpkg)
-    print("Layers: paragraphs_points, paragraphs_polygons")
+    print(f"Layers: {args.points_layer}, {args.polygons_layer}")
 
 
 if __name__ == "__main__":
