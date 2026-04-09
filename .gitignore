@@ -28,7 +28,7 @@ geo_class_cache.jsonl
 
 # Large dataset files that should not be tracked
 data/*.gpkg
-annotation/*.csv
+annotation/
 
 # Notebook and editor state
 *.ipynb_checkpoints
