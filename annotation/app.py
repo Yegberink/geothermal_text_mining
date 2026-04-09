@@ -485,10 +485,15 @@ with right:
                 st.caption(f"3. Frame correct: {'Yes' if matched_categories_correct else 'No'}")
 
         if matched_categories_correct is False and not matched_categories_true:
+            default_categories = [
+                cat
+                for cat in parse_listish(st.session_state.get(review_state_key(current_uid, "frame_selection"), ""))
+                if cat in ALL_CATEGORIES
+            ]
             selected_categories = st.multiselect(
                 "Correct frame(s)",
                 options=ALL_CATEGORIES,
-                default=parse_listish(st.session_state.get(review_state_key(current_uid, "frame_selection"), "")),
+                default=default_categories,
                 key=review_state_key(current_uid, "frame_selection"),
             )
             keyword_value = st.text_area(
