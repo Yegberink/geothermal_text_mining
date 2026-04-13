@@ -1,0 +1,6 @@
+annotator,model,n,accuracy,macro_f1
+Egberink,tabularisai_multilingual,150,0.54,0.46981618829482213
+Egberink,nlptown_multilingual,150,0.49333333333333335,0.49401579017797403
+Egberink,lxyuan_distilbert_multilingual,150,0.47333333333333333,0.39717514124293785
+Egberink,robbert_v2_dutch,150,0.4666666666666667,0.38888888888888884
+Egberink,robbertje_dutch,150,0.3933333333333333,0.32747644512350393

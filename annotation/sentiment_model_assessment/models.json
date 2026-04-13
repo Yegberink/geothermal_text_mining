@@ -1,0 +1,32 @@
+[
+  {
+    "model_id": "DTAI-KULeuven/robbert-v2-dutch-sentiment",
+    "model_slug": "robbert_v2_dutch",
+    "display_name": "RobBERT v2 Dutch",
+    "language_scope": "dutch"
+  },
+  {
+    "model_id": "DTAI-KULeuven/robbertje-merged-dutch-sentiment",
+    "model_slug": "robbertje_dutch",
+    "display_name": "RobBERTje Dutch",
+    "language_scope": "dutch"
+  },
+  {
+    "model_id": "nlptown/bert-base-multilingual-uncased-sentiment",
+    "model_slug": "nlptown_multilingual",
+    "display_name": "NLP Town Multilingual BERT",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "lxyuan/distilbert-base-multilingual-cased-sentiments-student",
+    "model_slug": "lxyuan_distilbert_multilingual",
+    "display_name": "LXYuan Multilingual DistilBERT",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "tabularisai/multilingual-sentiment-analysis",
+    "model_slug": "tabularisai_multilingual",
+    "display_name": "TabularisAI Multilingual",
+    "language_scope": "multilingual"
+  }
+]

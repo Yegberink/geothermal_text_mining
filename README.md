@@ -162,6 +162,30 @@ The current annotation flow supports review of:
 
 The app shows the sentence, paragraph context, predicted frame(s), predicted sentiment, and extracted location, then walks through the review questions step by step.
 
+## Sentiment model assessment
+
+A separate sentiment study workflow is available under `annotation/sentiment_model_assessment/`.
+
+It samples Dutch sentence-level records from the existing workflow, runs five Hugging Face sentiment classifiers, assigns the sampled sentences across `Dekker` and `Egberink` with overlap, and evaluates model performance afterward in a notebook.
+
+Generate the comparison set:
+
+```bash
+python scripts/assess_sentiment_models.py
+```
+
+Run the sentiment-only review app:
+
+```bash
+streamlit run annotation/sentiment_model_assessment/app.py
+```
+
+Analyze model performance afterward in:
+
+```bash
+annotation/sentiment_model_assessment/analysis.ipynb
+```
+
 ## Configuration notes
 
 - `language` in `config/config.yaml` rewrites `input_data/`, `output/`, `cache/`, `data/`, `vocab/`, and `annotation/` paths into language-specific subfolders.
