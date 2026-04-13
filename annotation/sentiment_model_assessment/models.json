@@ -1,32 +1,110 @@
 [
   {
-    "model_id": "DTAI-KULeuven/robbert-v2-dutch-sentiment",
-    "model_slug": "robbert_v2_dutch",
-    "display_name": "RobBERT v2 Dutch",
-    "language_scope": "dutch"
-  },
-  {
-    "model_id": "DTAI-KULeuven/robbertje-merged-dutch-sentiment",
-    "model_slug": "robbertje_dutch",
-    "display_name": "RobBERTje Dutch",
-    "language_scope": "dutch"
-  },
-  {
-    "model_id": "nlptown/bert-base-multilingual-uncased-sentiment",
-    "model_slug": "nlptown_multilingual",
-    "display_name": "NLP Town Multilingual BERT",
-    "language_scope": "multilingual"
-  },
-  {
-    "model_id": "lxyuan/distilbert-base-multilingual-cased-sentiments-student",
-    "model_slug": "lxyuan_distilbert_multilingual",
-    "display_name": "LXYuan Multilingual DistilBERT",
+    "model_id": "yangheng/deberta-v3-base-absa-v1.1",
+    "model_slug": "yangheng_deberta_v3_base_absa_v1_1",
+    "display_name": "yangheng DeBERTa v3 base ABSA",
     "language_scope": "multilingual"
   },
   {
     "model_id": "tabularisai/multilingual-sentiment-analysis",
     "model_slug": "tabularisai_multilingual",
     "display_name": "TabularisAI Multilingual",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "yangheng/deberta-v3-large-absa-v1.1",
+    "model_slug": "yangheng_deberta_v3_large_absa_v1_1",
+    "display_name": "yangheng DeBERTa v3 large ABSA",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "BramVanroy/robbert-v2-dutch-base-hebban-reviews",
+    "model_slug": "bramvanroy_robbert_v2_dutch_base_hebban_reviews",
+    "display_name": "BramVanroy RobBERT v2 Dutch Hebban",
+    "language_scope": "dutch"
+  },
+  {
+    "model_id": "BramVanroy/bert-base-multilingual-cased-hebban-reviews",
+    "model_slug": "bramvanroy_bert_base_multilingual_cased_hebban_reviews",
+    "display_name": "BramVanroy BERT multilingual Hebban",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "BramVanroy/bert-base-dutch-cased-hebban-reviews",
+    "model_slug": "bramvanroy_bert_base_dutch_cased_hebban_reviews",
+    "display_name": "BramVanroy BERT Dutch Hebban",
+    "language_scope": "dutch"
+  },
+  {
+    "model_id": "BramVanroy/xlm-roberta-base-hebban-reviews",
+    "model_slug": "bramvanroy_xlm_roberta_base_hebban_reviews",
+    "display_name": "BramVanroy XLM-RoBERTa base Hebban",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "BramVanroy/bert-base-dutch-cased-hebban-reviews5",
+    "model_slug": "bramvanroy_bert_base_dutch_cased_hebban_reviews5",
+    "display_name": "BramVanroy BERT Dutch Hebban v5",
+    "language_scope": "dutch"
+  },
+  {
+    "model_id": "BramVanroy/bert-base-multilingual-cased-hebban-reviews5",
+    "model_slug": "bramvanroy_bert_base_multilingual_cased_hebban_reviews5",
+    "display_name": "BramVanroy BERT multilingual Hebban v5",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "BramVanroy/robbert-v2-dutch-base-hebban-reviews5",
+    "model_slug": "bramvanroy_robbert_v2_dutch_base_hebban_reviews5",
+    "display_name": "BramVanroy RobBERT v2 Dutch Hebban v5",
+    "language_scope": "dutch"
+  },
+  {
+    "model_id": "AnasAlokla/multilingual_go_emotions",
+    "model_slug": "anasalokla_multilingual_go_emotions",
+    "display_name": "AnasAlokla Multilingual GoEmotions",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "yihan1/restaurant-review-analyzer-mt5",
+    "model_slug": "yihan1_restaurant_review_analyzer_mt5",
+    "display_name": "yihan1 Restaurant Review Analyzer MT5",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "oxygeneDev/sentiment-multilingual",
+    "model_slug": "oxygene_dev_sentiment_multilingual",
+    "display_name": "oxygeneDev Sentiment Multilingual",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "ZombitX64/MultiSent-E5-Pro",
+    "model_slug": "zombitx64_multisent_e5_pro",
+    "display_name": "ZombitX64 MultiSent E5 Pro",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "maximka608/multilingual-sentiment-analysis-ONNX",
+    "model_slug": "maximka608_multilingual_sentiment_analysis_onnx",
+    "display_name": "maximka608 Multilingual Sentiment ONNX",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "oralunal/sentiment",
+    "model_slug": "oralunal_sentiment",
+    "display_name": "oralunal Sentiment",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "xcixor/sentiment-swahili",
+    "model_slug": "xcixor_sentiment_swahili",
+    "display_name": "xcixor Sentiment Swahili",
+    "language_scope": "multilingual"
+  },
+  {
+    "model_id": "kamaludeen/multilingual_go_emotions-ONNX",
+    "model_slug": "kamaludeen_multilingual_go_emotions_onnx",
+    "display_name": "kamaludeen Multilingual GoEmotions ONNX",
     "language_scope": "multilingual"
   }
 ]
