@@ -1,37 +1,25 @@
-annotator,model,n,accuracy,macro_f1
-Dekker,oralunal_sentiment,150,0.62,0.45788405647560576
-Dekker,oxygene_dev_sentiment_multilingual,150,0.62,0.45788405647560576
-Dekker,tabularisai_multilingual,150,0.62,0.45788405647560576
-Dekker,xcixor_sentiment_swahili,150,0.62,0.45788405647560576
-Dekker,bramvanroy_bert_base_dutch_cased_hebban_reviews,150,0.5866666666666667,0.4830246913580247
-Dekker,bramvanroy_robbert_v2_dutch_base_hebban_reviews,150,0.5666666666666667,0.39930996321973766
-Dekker,bramvanroy_robbert_v2_dutch_base_hebban_reviews5,150,0.49333333333333335,0.4056933283107316
-Dekker,bramvanroy_xlm_roberta_base_hebban_reviews,150,0.4666666666666667,0.4486750480511706
-Dekker,bramvanroy_bert_base_multilingual_cased_hebban_reviews5,150,0.4266666666666667,0.41828245002687187
-Dekker,bramvanroy_bert_base_multilingual_cased_hebban_reviews,150,0.4266666666666667,0.3911734330225319
-Dekker,bramvanroy_bert_base_dutch_cased_hebban_reviews5,150,0.32666666666666666,0.32663412766771943
-Dekker,zombitx64_multisent_e5_pro,150,0.18,0.13293748969157182
-Dekker,anasalokla_multilingual_go_emotions,0,0.0,0.0
-Dekker,kamaludeen_multilingual_go_emotions_onnx,0,0.0,0.0
-Dekker,maximka608_multilingual_sentiment_analysis_onnx,0,0.0,0.0
-Dekker,yangheng_deberta_v3_base_absa_v1_1,0,0.0,0.0
-Dekker,yangheng_deberta_v3_large_absa_v1_1,0,0.0,0.0
-Dekker,yihan1_restaurant_review_analyzer_mt5,0,0.0,0.0
-Egberink,oralunal_sentiment,150,0.54,0.46981618829482213
-Egberink,oxygene_dev_sentiment_multilingual,150,0.54,0.46981618829482213
-Egberink,tabularisai_multilingual,150,0.54,0.46981618829482213
-Egberink,xcixor_sentiment_swahili,150,0.54,0.46981618829482213
-Egberink,bramvanroy_robbert_v2_dutch_base_hebban_reviews,150,0.5066666666666667,0.4545049477885299
-Egberink,bramvanroy_xlm_roberta_base_hebban_reviews,150,0.4866666666666667,0.4879071217079633
-Egberink,bramvanroy_bert_base_dutch_cased_hebban_reviews,150,0.47333333333333333,0.45036235816749176
-Egberink,bramvanroy_robbert_v2_dutch_base_hebban_reviews5,150,0.47333333333333333,0.44947795659589634
-Egberink,bramvanroy_bert_base_multilingual_cased_hebban_reviews5,150,0.4533333333333333,0.4386088908307418
-Egberink,bramvanroy_bert_base_dutch_cased_hebban_reviews5,150,0.44666666666666666,0.44268371289922887
-Egberink,bramvanroy_bert_base_multilingual_cased_hebban_reviews,150,0.44,0.433692221748102
-Egberink,zombitx64_multisent_e5_pro,150,0.20666666666666667,0.1669249998956651
-Egberink,anasalokla_multilingual_go_emotions,0,0.0,0.0
-Egberink,kamaludeen_multilingual_go_emotions_onnx,0,0.0,0.0
-Egberink,maximka608_multilingual_sentiment_analysis_onnx,0,0.0,0.0
-Egberink,yangheng_deberta_v3_base_absa_v1_1,0,0.0,0.0
-Egberink,yangheng_deberta_v3_large_absa_v1_1,0,0.0,0.0
-Egberink,yihan1_restaurant_review_analyzer_mt5,0,0.0,0.0
+annotator,model,model_display_name,n,accuracy,macro_f1
+Dekker,ollama_qwen2_5_7b,Ollama qwen2.5:14b,150,0.8133333333333334,0.7894897248345525
+Dekker,tabularisai_multilingual,TabularisAI Multilingual,150,0.62,0.45788405647560576
+Dekker,oralunal_sentiment,oralunal Sentiment,150,0.62,0.45788405647560576
+Dekker,oxygene_dev_sentiment_multilingual,oxygeneDev Sentiment Multilingual,150,0.62,0.45788405647560576
+Dekker,bramvanroy_bert_base_dutch_cased_hebban_reviews,BramVanroy BERT Dutch Hebban,150,0.5866666666666667,0.4830246913580247
+Dekker,bramvanroy_robbert_v2_dutch_base_hebban_reviews,BramVanroy RobBERT v2 Dutch Hebban,150,0.5666666666666667,0.39930996321973766
+Dekker,bramvanroy_robbert_v2_dutch_base_hebban_reviews5,BramVanroy RobBERT v2 Dutch Hebban v5,150,0.49333333333333335,0.4056933283107316
+Dekker,bramvanroy_xlm_roberta_base_hebban_reviews,BramVanroy XLM-RoBERTa base Hebban,150,0.4666666666666667,0.4486750480511706
+Dekker,bramvanroy_bert_base_multilingual_cased_hebban_reviews5,BramVanroy BERT multilingual Hebban v5,150,0.4266666666666667,0.41828245002687187
+Dekker,bramvanroy_bert_base_multilingual_cased_hebban_reviews,BramVanroy BERT multilingual Hebban,150,0.4266666666666667,0.3911734330225319
+Dekker,bramvanroy_bert_base_dutch_cased_hebban_reviews5,BramVanroy BERT Dutch Hebban v5,150,0.32666666666666666,0.32663412766771943
+Dekker,zombitx64_multisent_e5_pro,ZombitX64 MultiSent E5 Pro,150,0.18,0.13293748969157182
+Egberink,ollama_qwen2_5_7b,Ollama qwen2.5:14b,150,0.7866666666666666,0.7787580751806799
+Egberink,tabularisai_multilingual,TabularisAI Multilingual,150,0.54,0.46981618829482213
+Egberink,oralunal_sentiment,oralunal Sentiment,150,0.54,0.46981618829482213
+Egberink,oxygene_dev_sentiment_multilingual,oxygeneDev Sentiment Multilingual,150,0.54,0.46981618829482213
+Egberink,bramvanroy_robbert_v2_dutch_base_hebban_reviews,BramVanroy RobBERT v2 Dutch Hebban,150,0.5066666666666667,0.4545049477885299
+Egberink,bramvanroy_xlm_roberta_base_hebban_reviews,BramVanroy XLM-RoBERTa base Hebban,150,0.4866666666666667,0.4879071217079633
+Egberink,bramvanroy_bert_base_dutch_cased_hebban_reviews,BramVanroy BERT Dutch Hebban,150,0.47333333333333333,0.45036235816749176
+Egberink,bramvanroy_robbert_v2_dutch_base_hebban_reviews5,BramVanroy RobBERT v2 Dutch Hebban v5,150,0.47333333333333333,0.44947795659589634
+Egberink,bramvanroy_bert_base_multilingual_cased_hebban_reviews5,BramVanroy BERT multilingual Hebban v5,150,0.4533333333333333,0.4386088908307418
+Egberink,bramvanroy_bert_base_dutch_cased_hebban_reviews5,BramVanroy BERT Dutch Hebban v5,150,0.44666666666666666,0.44268371289922887
+Egberink,bramvanroy_bert_base_multilingual_cased_hebban_reviews,BramVanroy BERT multilingual Hebban,150,0.44,0.433692221748102
+Egberink,zombitx64_multisent_e5_pro,ZombitX64 MultiSent E5 Pro,150,0.20666666666666667,0.1669249998956651

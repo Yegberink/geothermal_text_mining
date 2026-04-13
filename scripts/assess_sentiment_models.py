@@ -7,35 +7,28 @@ import hashlib
 import json
 import os
 import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from tqdm.auto import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = Path("annotation/sentiment_model_assessment")
+DEFAULT_OLLAMA_URL = "http://localhost:11434/api/generate"
+DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
 DEFAULT_INPUT_CANDIDATES = [
     Path("output/dutch/text/sentence_sentiment_llm.csv"),
     Path("output/dutch/text/sentences_with_frames_long.csv"),
 ]
 DEFAULT_MODELS = [
     {
-        "model_id": "yangheng/deberta-v3-base-absa-v1.1",
-        "model_slug": "yangheng_deberta_v3_base_absa_v1_1",
-        "display_name": "yangheng DeBERTa v3 base ABSA",
-        "language_scope": "multilingual",
-    },
-    {
         "model_id": "tabularisai/multilingual-sentiment-analysis",
         "model_slug": "tabularisai_multilingual",
         "display_name": "TabularisAI Multilingual",
-        "language_scope": "multilingual",
-    },
-    {
-        "model_id": "yangheng/deberta-v3-large-absa-v1.1",
-        "model_slug": "yangheng_deberta_v3_large_absa_v1_1",
-        "display_name": "yangheng DeBERTa v3 large ABSA",
         "language_scope": "multilingual",
     },
     {
@@ -81,18 +74,6 @@ DEFAULT_MODELS = [
         "language_scope": "dutch",
     },
     {
-        "model_id": "AnasAlokla/multilingual_go_emotions",
-        "model_slug": "anasalokla_multilingual_go_emotions",
-        "display_name": "AnasAlokla Multilingual GoEmotions",
-        "language_scope": "multilingual",
-    },
-    {
-        "model_id": "yihan1/restaurant-review-analyzer-mt5",
-        "model_slug": "yihan1_restaurant_review_analyzer_mt5",
-        "display_name": "yihan1 Restaurant Review Analyzer MT5",
-        "language_scope": "multilingual",
-    },
-    {
         "model_id": "oxygeneDev/sentiment-multilingual",
         "model_slug": "oxygene_dev_sentiment_multilingual",
         "display_name": "oxygeneDev Sentiment Multilingual",
@@ -105,31 +86,84 @@ DEFAULT_MODELS = [
         "language_scope": "multilingual",
     },
     {
-        "model_id": "maximka608/multilingual-sentiment-analysis-ONNX",
-        "model_slug": "maximka608_multilingual_sentiment_analysis_onnx",
-        "display_name": "maximka608 Multilingual Sentiment ONNX",
-        "language_scope": "multilingual",
-    },
-    {
         "model_id": "oralunal/sentiment",
         "model_slug": "oralunal_sentiment",
         "display_name": "oralunal Sentiment",
         "language_scope": "multilingual",
     },
     {
-        "model_id": "xcixor/sentiment-swahili",
-        "model_slug": "xcixor_sentiment_swahili",
-        "display_name": "xcixor Sentiment Swahili",
+        "model_id": DEFAULT_OLLAMA_MODEL,
+        "model_slug": "ollama_qwen2_5_7b",
+        "display_name": "Ollama Qwen2.5 7B",
         "language_scope": "multilingual",
-    },
-    {
-        "model_id": "kamaludeen/multilingual_go_emotions-ONNX",
-        "model_slug": "kamaludeen_multilingual_go_emotions_onnx",
-        "display_name": "kamaludeen Multilingual GoEmotions ONNX",
-        "language_scope": "multilingual",
+        "backend": "ollama",
     },
 ]
 SENTIMENTS = ["negative", "neutral", "positive"]
+SENTIMENT_EXAMPLES = {
+    "negative": [
+        "Volgens de berekeningen van verschillende adviseurs bestaat een kans op 'cosmetische schade' van gebouwen in het gebied als gevolg van mogelijke 'seismische activiteit'.",
+        "Volgens de Rekenkamer zien de ministers 'de urgentie van het probleem onvoldoende in'.",
+        "Een investering van negentien miljoen euro moet als verloren worden beschouwd, aldus Gedeputeerde Staten (GS).",
+        "Desondanks besloot minister Stef Blok in juni om geen goedkeuring aan het project te geven omdat te veel risico's kleven aan het winnen van aardwarmte in Californië.",
+        "Aardwarmte wordt gezien als een serieuze alternatieve energiebron - al klinkt er ook kritiek in verband met de risico's, met name van de boringen.",
+        "Hoge investeringskosten spelen een rol, maar de nog beperkte vraag naar warmte is volgens de gemeente minstens een even grote factor. \"",
+        "Wat bewoners moeten betalen, is sterk afhankelijk van subsidies, want rendabel is aardwarmte nog niet.''",
+        "Drinkwaterbedrijven maken zich grote zorgen over de kwaliteit van ons drinkwater nu de ene na de andere vergunning wordt verleend om in drinkwatergebieden te speuren naar aardwarmte.",
+        "Velsen De overstap naar duurzame energie in het Noordzeekanaalgebied plaatst de IJmond voor grote uitdagingen.",
+        "Volgens de Rekenkamer beschermt de overheid de Nederlandse drinkwatervoorraden 'niet afdoende' tegen de risico's van het boren naar aardwarmte, zo staat in een nieuw rapport.",
+        "Daarbij werken niet alleen praktische zaken, maar ook wet- en regelgeving belemmerend.",
+        "Iedereen, en niet in de laatste plaats het ministerie, was zo enthousiast over geothermie dat de risico's voor mens en milieu werden vergeten.",
+        "De regelgeving is behoorlijk lastig, er worden nieuwe technieken gevraagd en er is veel kennis nodig.",
+    ],
+    "neutral": [
+        "Het ministerie van Economische Zaken, dat de vergunning verstrekt, acht de risico's zeer beperkt.",
+        "Eerder gaf de gemeente Dijk en Waard aan uitvoering van dit plan haar goedkeuring.",
+        "Technische en financiële haalbaarheid staan centraal in het onderzoek.",
+        "Uiteindelijk moet het warmtenetwerk omgezet worden naar een duurzame bron.\"",
+        "Ze kunnen wat doffe plofgeluiden horen en soms voelen ze wat trillingen.",
+        "Het ministerie van Economische Zaken heeft met een definitief besluit groen licht gegeven voor het winnen van aardwarmte in de centrale aan de Leyweg.",
+        "De afgelopen periode is een bijdrage geleverd aan onder meer Beleefcentrum Duurzame Energie Leven van de Wind in Wieringerwerf en Natuurcentrum De Marel bij Waalenburg op Texel.",
+        "Doet GTD dat onvoldoende, dan krijgt het bedrijf problemen met het verkrijgen van een vergunning van het ministerie.",
+        "De lijnen die we nu onderzoeken zijn gebieden waar we nog geen kennis van de diepe ondergrond hebben.\"",
+        "De behoefte aan duurzame warmte is erg groot.",
+        "Het doel is de energietransitie daar te versnellen, zodat de sectorale klimaatdoelen binnen bereik komen.",
+        "Er wordt geen materiaal uit de ondergrond gehaald, onderstreept de gemeente die een eigen 'Beleidsvisie op de ondergrond Barendrecht' heeft opgesteld.",
+        "Het boren en laten verrijzen van benodigde bouwwerken is niet toegestaan in dat bestemmingsplan.",
+    ],
+    "positive": [
+        "Ook dorpen en industrieterreinen in de omgeving profiteren van deze schone energie.\"",
+        "Het draagvlak voor het project is groot hier in Leeuwarden.",
+        "Door de verwachting dat de Europese CO2-prijs hoger uitvalt, is er minder subsidie nodig dan verwacht voor de eerder goedgekeurde projecten.",
+        "We zijn heel enthousiast over dit initiatief, dat ook grote kansen biedt voor betaalbare en duurzame warmte voor woningen en andere gebouwen.",
+        "Posthouwer verwacht de goedkeuring hiervoor ieder moment.",
+        "De korte afstand betekent een belangrijke besparing op de totale investeringskosten, omdat er geen kilometerslange buizen in de grond gelegd hoeven te worden.",
+        "Leverancier Richard Donkers (Donkers Green Energy) is ervan overtuigd dat de investering zich binnen acht jaar terugverdient. ,,",
+        "Noodzakelijk voor de financiële haalbaarheid van het project, bleek eerder al. Voordeel van geothermie is dat het niet afhankelijk is van het weer of de seizoenen, er is sprake van een constante warmtelevering.",
+        "Er is nog budget voor extra onderzoek\", zegt Klut. ,,",
+        "Wij geloven dat aardwarmte een van de grote kansen is voor duurzame warmte in Nederland\", zegt Japikse.",
+        "Productieput Zij hebben aardwarmte op de kaart gezet en hun kennis en ervaring gedeeld met nieuwe initiatiefnemers, overheden, toeleveranciers en vele andere geïnteresseerden.",
+        "Dankzij de 1,5 miljoen euro van Kansen voor West voor aardwarmteproject Polanen wordt de financiering van het uitgebreide warmtenet flink geholpen.",
+        "Dankzij deze innovatieve samenwerking wordt de wijk voorzien van duurzame warmte uit de buurt. \"",
+        "BOLSWARD Ze zochten naar draagvlak en ze lijken het te krijgen: de Stichting Ontwikkeling Geothermie Friesland (STOGEF) hield vorige week een informatiebijeenkomst om belangstellenden te vertellen over hun initiatief om Bolsward te verwarmen door middel van geothermie.",
+        "De brancheorganisatie vindt SDE++ het belangrijkste instrument voor de stimulering van duurzame energie.",
+    ],
+}
+OLLAMA_SYSTEM_PROMPT = (
+    "You are a careful sentiment classification assistant for Dutch newspaper sentences about geothermal energy. "
+    "You must return a single sentiment label and a short rationale in valid JSON only."
+)
+
+
+def resolve_model_configs(ollama_model: str) -> list[dict[str, Any]]:
+    resolved: list[dict[str, Any]] = []
+    for model_cfg in DEFAULT_MODELS:
+        current = dict(model_cfg)
+        if current.get("backend") == "ollama":
+            current["model_id"] = ollama_model
+            current["display_name"] = f"Ollama {ollama_model}"
+        resolved.append(current)
+    return resolved
 
 
 def parse_args() -> argparse.Namespace:
@@ -144,6 +178,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--random-seed", type=int, default=42)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--max-length", type=int, default=256)
+    ap.add_argument("--ollama-url", type=str, default=DEFAULT_OLLAMA_URL)
+    ap.add_argument("--ollama-model", type=str, default=DEFAULT_OLLAMA_MODEL)
+    ap.add_argument("--ollama-timeout", type=int, default=120)
     return ap.parse_args()
 
 
@@ -356,6 +393,150 @@ def load_classifier(model_id: str):
         raise
 
 
+def format_few_shot_examples() -> str:
+    lines: list[str] = []
+    for sentiment in SENTIMENTS:
+        lines.append(f"{sentiment.upper()} examples:")
+        for index, sentence in enumerate(SENTIMENT_EXAMPLES[sentiment], start=1):
+            lines.append(f"{index}. {sentence}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def build_ollama_prompt(text: str) -> str:
+    examples_block = format_few_shot_examples()
+    return f"""
+Task: Classify the sentiment of this Dutch newspaper sentence about geothermal energy.
+
+Use only these labels:
+- negative
+- neutral
+- positive
+
+Interpretation rules:
+- negative: emphasizes risk, costs, obstacles, criticism, harm, uncertainty, or failure
+- neutral: mainly factual, procedural, descriptive, or mixed without clear evaluative polarity
+- positive: emphasizes benefits, support, progress, feasibility, opportunity, or success
+
+Use the following labeled examples as guidance:
+{examples_block}
+
+Return valid JSON only with these keys:
+- sentiment
+- confidence
+- rationale_short
+
+Requirements:
+- sentiment must be exactly one of: negative, neutral, positive
+- confidence must be a number from 0 to 1
+- rationale_short must be <= 20 words
+
+Sentence:
+{text}
+""".strip()
+
+
+def extract_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(start, len(text)):
+        char = text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+
+    return None
+
+
+def parse_ollama_sentiment_response(raw_response: str, model_id: str) -> dict[str, Any]:
+    candidate = extract_json_object(raw_response)
+    if candidate is not None:
+        try:
+            obj = json.loads(candidate)
+            raw_label = str(obj.get("sentiment", "") or "").strip()
+            return {
+                "predicted_sentiment": normalize_sentiment_label(raw_label, model_id=model_id),
+                "raw_label": raw_label,
+                "confidence": max(0.0, min(1.0, float(obj.get("confidence", 0.0) or 0.0))),
+                "raw_response": raw_response,
+                "rationale_short": str(obj.get("rationale_short", "") or "").strip(),
+            }
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+    lowered = raw_response.lower()
+    label_match = re.search(r"\b(negative|neutral|positive)\b", lowered)
+    if label_match:
+        raw_label = label_match.group(1)
+        score_match = re.search(r"(?:confidence|score)\s*[:=]?\s*([01](?:\.\d+)?)", lowered)
+        score = float(score_match.group(1)) if score_match else 0.0
+        return {
+            "predicted_sentiment": normalize_sentiment_label(raw_label, model_id=model_id),
+            "raw_label": raw_label,
+            "confidence": max(0.0, min(1.0, score)),
+            "raw_response": raw_response,
+            "rationale_short": "",
+        }
+
+    raise ValueError(f"Ollama did not return a parseable sentiment label: {raw_response!r}")
+
+
+def call_ollama_sentiment(
+    text: str,
+    model_id: str,
+    ollama_url: str,
+    timeout: int,
+) -> dict[str, Any]:
+    payload = {
+        "model": model_id,
+        "system": OLLAMA_SYSTEM_PROMPT,
+        "prompt": build_ollama_prompt(text),
+        "stream": False,
+        "options": {"temperature": 0.0, "num_predict": 120},
+    }
+    request = urllib.request.Request(
+        ollama_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 404 and "not found" in detail.lower():
+            raise RuntimeError(
+                f"Ollama model '{model_id}' was not found at {ollama_url}. "
+                f"Pull it first with: ollama pull {model_id}"
+            ) from exc
+        raise RuntimeError(f"Ollama HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Ollama at {ollama_url}: {exc.reason}") from exc
+
+    raw_response = str(body.get("response", "") or "").strip()
+    return parse_ollama_sentiment_response(raw_response=raw_response, model_id=model_id)
+
+
 def classify_texts(
     classifier: Any,
     texts: list[str],
@@ -383,10 +564,37 @@ def classify_texts(
     return rows
 
 
+def classify_texts_with_ollama(
+    texts: list[str],
+    model_id: str,
+    ollama_url: str,
+    timeout: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    progress = tqdm(
+        texts,
+        desc=f"Ollama sentiment ({model_id})",
+        unit="sentence",
+    )
+    for text in progress:
+        rows.append(
+            call_ollama_sentiment(
+                text=text,
+                model_id=model_id,
+                ollama_url=ollama_url,
+                timeout=timeout,
+            )
+        )
+    return rows
+
+
 def build_predictions_long(
     sampled: pd.DataFrame,
+    model_configs: list[dict[str, Any]],
     batch_size: int,
     max_length: int,
+    ollama_url: str,
+    ollama_timeout: int,
 ) -> pd.DataFrame:
     base_cols = [
         "annotation_id",
@@ -413,32 +621,43 @@ def build_predictions_long(
     texts = sampled["sentence_text"].astype(str).tolist()
     prediction_frames: list[pd.DataFrame] = []
 
-    for model_cfg in DEFAULT_MODELS:
-        print(f"Running {model_cfg['model_id']} ...")
+    for model_cfg in model_configs:
+        model_id = model_cfg["model_id"]
+        print(f"Running {model_id} ...")
         model_df = sampled[base_cols].copy()
-        model_df["model_id"] = model_cfg["model_id"]
+        model_df["model_id"] = model_id
         model_df["model_slug"] = model_cfg["model_slug"]
         model_df["model_display_name"] = model_cfg["display_name"]
         model_df["language_scope"] = model_cfg["language_scope"]
+        model_df["predicted_sentiment"] = pd.Series([None] * len(model_df), dtype="object")
+        model_df["raw_label"] = pd.Series([None] * len(model_df), dtype="object")
+        model_df["confidence"] = pd.Series([float("nan")] * len(model_df), dtype="float64")
+        model_df["model_status"] = pd.Series([None] * len(model_df), dtype="object")
+        model_df["model_error"] = pd.Series([None] * len(model_df), dtype="object")
         try:
-            classifier = load_classifier(model_cfg["model_id"])
-            predictions = classify_texts(
-                classifier=classifier,
-                texts=texts,
-                model_id=model_cfg["model_id"],
-                batch_size=batch_size,
-                max_length=max_length,
-            )
+            if model_cfg.get("backend") == "ollama":
+                predictions = classify_texts_with_ollama(
+                    texts=texts,
+                    model_id=model_id,
+                    ollama_url=ollama_url,
+                    timeout=ollama_timeout,
+                )
+            else:
+                classifier = load_classifier(model_id)
+                predictions = classify_texts(
+                    classifier=classifier,
+                    texts=texts,
+                    model_id=model_id,
+                    batch_size=batch_size,
+                    max_length=max_length,
+                )
             model_df["predicted_sentiment"] = [row["predicted_sentiment"] for row in predictions]
             model_df["raw_label"] = [row["raw_label"] for row in predictions]
             model_df["confidence"] = [row["confidence"] for row in predictions]
             model_df["model_status"] = "ok"
             model_df["model_error"] = None
         except Exception as exc:
-            print(f"Model failed: {model_cfg['model_id']} -> {exc!r}")
-            model_df["predicted_sentiment"] = None
-            model_df["raw_label"] = None
-            model_df["confidence"] = None
+            print(f"Model failed: {model_id} -> {exc!r}")
             model_df["model_status"] = "error"
             model_df["model_error"] = repr(exc)
         prediction_frames.append(model_df)
@@ -446,7 +665,11 @@ def build_predictions_long(
     return pd.concat(prediction_frames, ignore_index=True)
 
 
-def build_predictions_wide(sampled: pd.DataFrame, predictions_long: pd.DataFrame) -> pd.DataFrame:
+def build_predictions_wide(
+    sampled: pd.DataFrame,
+    predictions_long: pd.DataFrame,
+    model_configs: list[dict[str, Any]],
+) -> pd.DataFrame:
     metadata_cols = [
         "annotation_id",
         "sample_id",
@@ -468,7 +691,7 @@ def build_predictions_wide(sampled: pd.DataFrame, predictions_long: pd.DataFrame
     metadata_cols = [column for column in metadata_cols if column in sampled.columns]
     wide = sampled[metadata_cols].copy()
 
-    for model_cfg in DEFAULT_MODELS:
+    for model_cfg in model_configs:
         current = predictions_long[predictions_long["model_slug"] == model_cfg["model_slug"]].copy()
         current = current[
             [
@@ -507,6 +730,7 @@ def main() -> None:
     input_csv = resolve_input_csv(args.input_csv)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    model_configs = resolve_model_configs(args.ollama_model)
 
     source_df = prepare_source_df(pd.read_csv(input_csv))
     sampled = sample_rows(source_df, sample_size=unique_sample_size, random_seed=args.random_seed)
@@ -530,10 +754,17 @@ def main() -> None:
 
     predictions_long = build_predictions_long(
         sampled=sampled,
+        model_configs=model_configs,
         batch_size=args.batch_size,
         max_length=args.max_length,
+        ollama_url=args.ollama_url,
+        ollama_timeout=args.ollama_timeout,
     )
-    predictions_wide = build_predictions_wide(sampled=sampled, predictions_long=predictions_long)
+    predictions_wide = build_predictions_wide(
+        sampled=sampled,
+        predictions_long=predictions_long,
+        model_configs=model_configs,
+    )
 
     long_path = output_dir / "model_predictions_long.csv"
     wide_path = output_dir / "model_predictions_wide.csv"
@@ -541,7 +772,7 @@ def main() -> None:
 
     predictions_long.to_csv(long_path, index=False, encoding="utf-8")
     predictions_wide.to_csv(wide_path, index=False, encoding="utf-8")
-    models_path.write_text(json.dumps(DEFAULT_MODELS, ensure_ascii=False, indent=2), encoding="utf-8")
+    models_path.write_text(json.dumps(model_configs, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote long predictions: {long_path}")
     print(f"Wrote wide predictions: {wide_path}")
     print(f"Wrote model metadata: {models_path}")
