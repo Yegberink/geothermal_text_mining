@@ -69,10 +69,12 @@ ollama:
   save_every: 25
   sleep_s: 0.0
 
-sentiment_hf:
-  model: nlptown/bert-base-multilingual-uncased-sentiment
-  batch_size: 32
-  max_length: 256
+sentiment_ollama:
+  model: llama3.1:8b
+  prompt_variant: zero_shot
+  timeout: 120
+  sleep_s: 0.0
+  save_every: 25
 
 online_geocoding:
   country_codes: ""
@@ -126,6 +128,6 @@ paths:
   geo_class_checkpoint: cache/geo_class_checkpoint.parquet
   geo_class_cache: cache/geo_class_cache.jsonl
   geo_class_partial_csv: cache/geo_class_partial_results.csv
-  sentence_sentiment_checkpoint: cache/sentence_sentiment_hf_checkpoint.parquet
-  sentence_sentiment_cache: cache/sentence_sentiment_hf_cache.jsonl
-  sentence_sentiment_partial_csv: cache/sentence_sentiment_hf_partial_results.csv
+  sentence_sentiment_checkpoint: cache/sentence_sentiment_ollama_checkpoint.parquet
+  sentence_sentiment_cache: cache/sentence_sentiment_ollama_cache.jsonl
+  sentence_sentiment_partial_csv: cache/sentence_sentiment_ollama_partial_results.csv

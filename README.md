@@ -19,8 +19,8 @@ The current `Snakefile` runs the following pipeline:
 5. `scripts/classification_sentences.py`
    Runs keyword-based frame matching on the sentence table and keeps only sentences with at least one matched frame.
 6. `scripts/sentiment_classification.py`
-   Runs a multilingual Hugging Face sentiment model on the frame-bearing sentences.
-   Duplicate `sentence_text` values are deduplicated before inference and merged back afterward.
+   Runs a local Ollama sentiment classifier on the frame-bearing sentences.
+   Duplicate `sentence_text` values are cached locally to avoid repeated model calls.
 7. `scripts/geocoding_offline.py`
    Matches the extracted paragraph location against municipality and province layers locally.
 8. `scripts/geocoding_online.py`
@@ -43,7 +43,7 @@ In short, the current workflow is:
 - `Snakefile`
   Workflow definition.
 - `config/config.yaml`
-  Central configuration for paths, language, Ollama models, the Hugging Face sentiment model, geocoding settings, and annotation export filters.
+  Central configuration for paths, language, Ollama models, Ollama sentiment settings, geocoding settings, and annotation export filters.
 - `pixi.toml`
   Environment definition for Python, Snakemake, geopandas, transformers, torch, plotly, and the rest of the pipeline dependencies.
 
@@ -96,16 +96,15 @@ The current workflow uses Ollama for:
 
 - paragraph-level geothermal relevance classification
 - paragraph-level primary location extraction
+- sentence-level sentiment classification
 
-These models are configured in `config/config.yaml` under `ollama`.
-
-### Hugging Face sentiment model
+Paragraph-level models are configured in `config/config.yaml` under `ollama`.
 
 Sentence-level sentiment is currently handled by:
 
-- `nlptown/bert-base-multilingual-uncased-sentiment`
+- `llama3.1:8b`
 
-This is configured in `config/config.yaml` under `sentiment_hf`.
+using a zero-shot prompt. This is configured in `config/config.yaml` under `sentiment_ollama`.
 
 ## Installation
 
@@ -166,7 +165,7 @@ The app shows the sentence, paragraph context, predicted frame(s), predicted sen
 
 A separate sentiment study workflow is available under `annotation/sentiment_model_assessment/`.
 
-It samples Dutch sentence-level records from the existing workflow, runs a curated comparison set of Dutch and multilingual Hugging Face sentiment classifiers plus an optional local Ollama instruction model, assigns the sampled sentences across `Dekker` and `Egberink` with overlap, and evaluates model performance afterward in a notebook.
+It samples Dutch sentence-level records from the existing workflow, runs a local Ollama sentiment comparison set, assigns the sampled sentences across `Dekker` and `Egberink` with overlap, and evaluates model performance afterward in a notebook.
 
 Generate the comparison set:
 
@@ -174,11 +173,14 @@ Generate the comparison set:
 python scripts/assess_sentiment_models.py
 ```
 
-Use a specific local Ollama model for the few-shot sentiment run:
+Use specific local Ollama models for the comparison run:
 
 ```bash
 ollama pull qwen2.5:14b
-python scripts/assess_sentiment_models.py --ollama-model qwen2.5:14b
+ollama pull llama3.1:8b
+ollama pull mistral
+ollama pull phi3
+python scripts/assess_sentiment_models.py --ollama-models qwen2.5:14b,llama3.1:8b,mistral,phi3
 ```
 
 Run the sentiment-only review app:
@@ -197,13 +199,12 @@ annotation/sentiment_model_assessment/analysis.ipynb
 
 - `language` in `config/config.yaml` rewrites `input_data/`, `output/`, `cache/`, `data/`, `vocab/`, and `annotation/` paths into language-specific subfolders.
 - Runtime cache and checkpoint files are written under `cache/{language}/`.
-- The geothermal relevance and location extraction steps require a local Ollama server and the configured models.
-- The first run of the Hugging Face sentiment model may need to download model weights if they are not already cached locally.
+- The geothermal relevance, location extraction, and sentence sentiment steps require a local Ollama server and the configured models.
 - If you want to change file names or locations, update `config/config.yaml` instead of editing the `Snakefile`.
 
 ## Notes on outputs
 
 - The sentence-level frame filter is applied before sentiment, so only sentences with a matched frame are sent to the sentiment classifier.
-- Sentiment is deduplicated on `sentence_text` before inference to reduce repeated model calls.
+- Sentiment caching uses `sentence_text` together with the configured model and prompt variant to reduce repeated model calls.
 - The location output in `output/{language}/figures/locations_map.html` is interactive:
   hover shows the matched location and clicking a point reveals the associated text.

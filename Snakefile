@@ -184,9 +184,13 @@ rule classify_sentence_sentiment:
         checkpoint=PATHS["sentence_sentiment_checkpoint"],
         cache=PATHS["sentence_sentiment_cache"],
         partial=PATHS["sentence_sentiment_partial_csv"],
-        model=config.get("sentiment_hf", {}).get("model", "nlptown/bert-base-multilingual-uncased-sentiment"),
-        batch_size=config.get("sentiment_hf", {}).get("batch_size", 32),
-        max_length=config.get("sentiment_hf", {}).get("max_length", 256),
+        model=config.get("sentiment_ollama", {}).get("model", "llama3.1:8b"),
+        ollama_url=OLLAMA["url"],
+        language=LANGUAGE,
+        prompt_variant=config.get("sentiment_ollama", {}).get("prompt_variant", "zero_shot"),
+        timeout=config.get("sentiment_ollama", {}).get("timeout", 120),
+        sleep_s=config.get("sentiment_ollama", {}).get("sleep_s", 0.0),
+        save_every=config.get("sentiment_ollama", {}).get("save_every", 25),
     shell:
         """
         {PYTHON} scripts/sentiment_classification.py \
@@ -198,8 +202,12 @@ rule classify_sentence_sentiment:
           --cache {params.cache} \
           --partial-csv {params.partial} \
           --model {params.model} \
-          --batch-size {params.batch_size} \
-          --max-length {params.max_length}
+          --ollama-url {params.ollama_url} \
+          --language {params.language} \
+          --prompt-variant {params.prompt_variant} \
+          --timeout {params.timeout} \
+          --sleep-s {params.sleep_s} \
+          --save-every {params.save_every}
         """
 
 

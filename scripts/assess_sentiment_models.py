@@ -14,155 +14,82 @@ from typing import Any
 
 import pandas as pd
 from tqdm.auto import tqdm
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = Path("annotation/sentiment_model_assessment")
 DEFAULT_OLLAMA_URL = "http://localhost:11434/api/generate"
 DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
+DEFAULT_OLLAMA_MODELS = [
+    "qwen2.5:7b",
+    "llama3.1:8b",
+    "qwen2.5:14b"
+]
 DEFAULT_INPUT_CANDIDATES = [
     Path("output/dutch/text/sentence_sentiment_llm.csv"),
     Path("output/dutch/text/sentences_with_frames_long.csv"),
 ]
 DEFAULT_MODELS = [
     {
-        "model_id": "tabularisai/multilingual-sentiment-analysis",
-        "model_slug": "tabularisai_multilingual",
-        "display_name": "TabularisAI Multilingual",
-        "language_scope": "multilingual",
-    },
-    {
-        "model_id": "BramVanroy/robbert-v2-dutch-base-hebban-reviews",
-        "model_slug": "bramvanroy_robbert_v2_dutch_base_hebban_reviews",
-        "display_name": "BramVanroy RobBERT v2 Dutch Hebban",
-        "language_scope": "dutch",
-    },
-    {
-        "model_id": "BramVanroy/bert-base-multilingual-cased-hebban-reviews",
-        "model_slug": "bramvanroy_bert_base_multilingual_cased_hebban_reviews",
-        "display_name": "BramVanroy BERT multilingual Hebban",
-        "language_scope": "multilingual",
-    },
-    {
-        "model_id": "BramVanroy/bert-base-dutch-cased-hebban-reviews",
-        "model_slug": "bramvanroy_bert_base_dutch_cased_hebban_reviews",
-        "display_name": "BramVanroy BERT Dutch Hebban",
-        "language_scope": "dutch",
-    },
-    {
-        "model_id": "BramVanroy/xlm-roberta-base-hebban-reviews",
-        "model_slug": "bramvanroy_xlm_roberta_base_hebban_reviews",
-        "display_name": "BramVanroy XLM-RoBERTa base Hebban",
-        "language_scope": "multilingual",
-    },
-    {
-        "model_id": "BramVanroy/bert-base-dutch-cased-hebban-reviews5",
-        "model_slug": "bramvanroy_bert_base_dutch_cased_hebban_reviews5",
-        "display_name": "BramVanroy BERT Dutch Hebban v5",
-        "language_scope": "dutch",
-    },
-    {
-        "model_id": "BramVanroy/bert-base-multilingual-cased-hebban-reviews5",
-        "model_slug": "bramvanroy_bert_base_multilingual_cased_hebban_reviews5",
-        "display_name": "BramVanroy BERT multilingual Hebban v5",
-        "language_scope": "multilingual",
-    },
-    {
-        "model_id": "BramVanroy/robbert-v2-dutch-base-hebban-reviews5",
-        "model_slug": "bramvanroy_robbert_v2_dutch_base_hebban_reviews5",
-        "display_name": "BramVanroy RobBERT v2 Dutch Hebban v5",
-        "language_scope": "dutch",
-    },
-    {
-        "model_id": "oxygeneDev/sentiment-multilingual",
-        "model_slug": "oxygene_dev_sentiment_multilingual",
-        "display_name": "oxygeneDev Sentiment Multilingual",
-        "language_scope": "multilingual",
-    },
-    {
-        "model_id": "ZombitX64/MultiSent-E5-Pro",
-        "model_slug": "zombitx64_multisent_e5_pro",
-        "display_name": "ZombitX64 MultiSent E5 Pro",
-        "language_scope": "multilingual",
-    },
-    {
-        "model_id": "oralunal/sentiment",
-        "model_slug": "oralunal_sentiment",
-        "display_name": "oralunal Sentiment",
-        "language_scope": "multilingual",
-    },
-    {
         "model_id": DEFAULT_OLLAMA_MODEL,
-        "model_slug": "ollama_qwen2_5_7b",
-        "display_name": "Ollama Qwen2.5 7B",
+        "model_slug": "ollama_template",
+        "display_name": "Ollama Template",
         "language_scope": "multilingual",
         "backend": "ollama",
     },
 ]
 SENTIMENTS = ["negative", "neutral", "positive"]
+OLLAMA_PROMPT_VARIANTS = ["few_shot"]
 SENTIMENT_EXAMPLES = {
     "negative": [
-        "Volgens de berekeningen van verschillende adviseurs bestaat een kans op 'cosmetische schade' van gebouwen in het gebied als gevolg van mogelijke 'seismische activiteit'.",
-        "Volgens de Rekenkamer zien de ministers 'de urgentie van het probleem onvoldoende in'.",
-        "Een investering van negentien miljoen euro moet als verloren worden beschouwd, aldus Gedeputeerde Staten (GS).",
-        "Desondanks besloot minister Stef Blok in juni om geen goedkeuring aan het project te geven omdat te veel risico's kleven aan het winnen van aardwarmte in Californië.",
-        "Aardwarmte wordt gezien als een serieuze alternatieve energiebron - al klinkt er ook kritiek in verband met de risico's, met name van de boringen.",
-        "Hoge investeringskosten spelen een rol, maar de nog beperkte vraag naar warmte is volgens de gemeente minstens een even grote factor. \"",
-        "Wat bewoners moeten betalen, is sterk afhankelijk van subsidies, want rendabel is aardwarmte nog niet.''",
-        "Drinkwaterbedrijven maken zich grote zorgen over de kwaliteit van ons drinkwater nu de ene na de andere vergunning wordt verleend om in drinkwatergebieden te speuren naar aardwarmte.",
-        "Velsen De overstap naar duurzame energie in het Noordzeekanaalgebied plaatst de IJmond voor grote uitdagingen.",
-        "Volgens de Rekenkamer beschermt de overheid de Nederlandse drinkwatervoorraden 'niet afdoende' tegen de risico's van het boren naar aardwarmte, zo staat in een nieuw rapport.",
-        "Daarbij werken niet alleen praktische zaken, maar ook wet- en regelgeving belemmerend.",
-        "Iedereen, en niet in de laatste plaats het ministerie, was zo enthousiast over geothermie dat de risico's voor mens en milieu werden vergeten.",
-        "De regelgeving is behoorlijk lastig, er worden nieuwe technieken gevraagd en er is veel kennis nodig.",
+        "Volgens de Rekenkamer zien de ministers de urgentie van het probleem onvoldoende in.",
+        "Een investering van negentien miljoen euro moet als verloren worden beschouwd.",
+        "Drinkwaterbedrijven maken zich grote zorgen over de kwaliteit van ons drinkwater.",
     ],
     "neutral": [
-        "Het ministerie van Economische Zaken, dat de vergunning verstrekt, acht de risico's zeer beperkt.",
-        "Eerder gaf de gemeente Dijk en Waard aan uitvoering van dit plan haar goedkeuring.",
         "Technische en financiële haalbaarheid staan centraal in het onderzoek.",
-        "Uiteindelijk moet het warmtenetwerk omgezet worden naar een duurzame bron.\"",
-        "Ze kunnen wat doffe plofgeluiden horen en soms voelen ze wat trillingen.",
-        "Het ministerie van Economische Zaken heeft met een definitief besluit groen licht gegeven voor het winnen van aardwarmte in de centrale aan de Leyweg.",
-        "De afgelopen periode is een bijdrage geleverd aan onder meer Beleefcentrum Duurzame Energie Leven van de Wind in Wieringerwerf en Natuurcentrum De Marel bij Waalenburg op Texel.",
-        "Doet GTD dat onvoldoende, dan krijgt het bedrijf problemen met het verkrijgen van een vergunning van het ministerie.",
-        "De lijnen die we nu onderzoeken zijn gebieden waar we nog geen kennis van de diepe ondergrond hebben.\"",
-        "De behoefte aan duurzame warmte is erg groot.",
-        "Het doel is de energietransitie daar te versnellen, zodat de sectorale klimaatdoelen binnen bereik komen.",
-        "Er wordt geen materiaal uit de ondergrond gehaald, onderstreept de gemeente die een eigen 'Beleidsvisie op de ondergrond Barendrecht' heeft opgesteld.",
-        "Het boren en laten verrijzen van benodigde bouwwerken is niet toegestaan in dat bestemmingsplan.",
+        "Het ministerie van Economische Zaken acht de risico's zeer beperkt.",
+        "Het ministerie heeft groen licht gegeven voor het winnen van aardwarmte.",
     ],
     "positive": [
-        "Ook dorpen en industrieterreinen in de omgeving profiteren van deze schone energie.\"",
-        "Het draagvlak voor het project is groot hier in Leeuwarden.",
-        "Door de verwachting dat de Europese CO2-prijs hoger uitvalt, is er minder subsidie nodig dan verwacht voor de eerder goedgekeurde projecten.",
-        "We zijn heel enthousiast over dit initiatief, dat ook grote kansen biedt voor betaalbare en duurzame warmte voor woningen en andere gebouwen.",
-        "Posthouwer verwacht de goedkeuring hiervoor ieder moment.",
-        "De korte afstand betekent een belangrijke besparing op de totale investeringskosten, omdat er geen kilometerslange buizen in de grond gelegd hoeven te worden.",
-        "Leverancier Richard Donkers (Donkers Green Energy) is ervan overtuigd dat de investering zich binnen acht jaar terugverdient. ,,",
-        "Noodzakelijk voor de financiële haalbaarheid van het project, bleek eerder al. Voordeel van geothermie is dat het niet afhankelijk is van het weer of de seizoenen, er is sprake van een constante warmtelevering.",
-        "Er is nog budget voor extra onderzoek\", zegt Klut. ,,",
-        "Wij geloven dat aardwarmte een van de grote kansen is voor duurzame warmte in Nederland\", zegt Japikse.",
-        "Productieput Zij hebben aardwarmte op de kaart gezet en hun kennis en ervaring gedeeld met nieuwe initiatiefnemers, overheden, toeleveranciers en vele andere geïnteresseerden.",
-        "Dankzij de 1,5 miljoen euro van Kansen voor West voor aardwarmteproject Polanen wordt de financiering van het uitgebreide warmtenet flink geholpen.",
-        "Dankzij deze innovatieve samenwerking wordt de wijk voorzien van duurzame warmte uit de buurt. \"",
-        "BOLSWARD Ze zochten naar draagvlak en ze lijken het te krijgen: de Stichting Ontwikkeling Geothermie Friesland (STOGEF) hield vorige week een informatiebijeenkomst om belangstellenden te vertellen over hun initiatief om Bolsward te verwarmen door middel van geothermie.",
-        "De brancheorganisatie vindt SDE++ het belangrijkste instrument voor de stimulering van duurzame energie.",
+        "We zijn heel enthousiast over dit initiatief.",
+        "Het draagvlak voor het project is groot.",
+        "De investering verdient zich binnen acht jaar terug.",
     ],
 }
+
 OLLAMA_SYSTEM_PROMPT = (
     "You are a careful sentiment classification assistant for Dutch newspaper sentences about geothermal energy. "
     "You must return a single sentiment label and a short rationale in valid JSON only."
 )
 
 
-def resolve_model_configs(ollama_model: str) -> list[dict[str, Any]]:
+def slugify_model_name(model_name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", model_name.lower()).strip("_")
+
+
+def parse_ollama_models(raw_value: str) -> list[str]:
+    models = [part.strip() for part in raw_value.split(",") if part.strip()]
+    if not models:
+        raise ValueError("At least one Ollama model must be provided.")
+    return models
+
+
+def resolve_model_configs(ollama_models: list[str]) -> list[dict[str, Any]]:
     resolved: list[dict[str, Any]] = []
     for model_cfg in DEFAULT_MODELS:
-        current = dict(model_cfg)
-        if current.get("backend") == "ollama":
-            current["model_id"] = ollama_model
-            current["display_name"] = f"Ollama {ollama_model}"
-        resolved.append(current)
+        if model_cfg.get("backend") != "ollama":
+            resolved.append(dict(model_cfg))
+            continue
+
+        for model_name in ollama_models:
+            base_slug = slugify_model_name(model_name)
+            for prompt_variant in OLLAMA_PROMPT_VARIANTS:
+                current = dict(model_cfg)
+                current["model_id"] = model_name
+                current["prompt_variant"] = prompt_variant
+                current["model_slug"] = f"ollama_{base_slug}_{prompt_variant}"
+                current["display_name"] = f"Ollama {model_name} ({prompt_variant.replace('_', '-')})"
+                resolved.append(current)
     return resolved
 
 
@@ -180,6 +107,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--max-length", type=int, default=256)
     ap.add_argument("--ollama-url", type=str, default=DEFAULT_OLLAMA_URL)
     ap.add_argument("--ollama-model", type=str, default=DEFAULT_OLLAMA_MODEL)
+    ap.add_argument("--ollama-models", type=str, default=",".join(DEFAULT_OLLAMA_MODELS))
     ap.add_argument("--ollama-timeout", type=int, default=120)
     return ap.parse_args()
 
@@ -374,25 +302,6 @@ def assign_annotators(
     return out
 
 
-def load_classifier(model_id: str):
-    try:
-        return pipeline(task="sentiment-analysis", model=model_id, tokenizer=model_id)
-    except Exception as exc:
-        message = str(exc)
-        if "endswith" in message or "convert_slow_tokenizer" in message:
-            tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=False)
-            return pipeline(task="sentiment-analysis", model=model_id, tokenizer=tokenizer)
-        offline_markers = ["Failed to resolve", "MaxRetryError", "NameResolutionError", "ConnectionError"]
-        if any(marker in message for marker in offline_markers):
-            try:
-                tokenizer = AutoTokenizer.from_pretrained(model_id, local_files_only=True)
-            except Exception:
-                tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=False, local_files_only=True)
-            model = AutoModelForSequenceClassification.from_pretrained(model_id, local_files_only=True)
-            return pipeline(task="sentiment-analysis", model=model, tokenizer=tokenizer)
-        raise
-
-
 def format_few_shot_examples() -> str:
     lines: list[str] = []
     for sentiment in SENTIMENTS:
@@ -403,8 +312,11 @@ def format_few_shot_examples() -> str:
     return "\n".join(lines).strip()
 
 
-def build_ollama_prompt(text: str) -> str:
+def build_ollama_prompt(text: str, prompt_variant: str) -> str:
     examples_block = format_few_shot_examples()
+    examples_section = ""
+    if prompt_variant == "few_shot":
+        examples_section = f"\nUse the following labeled examples as guidance:\n{examples_block}\n"
     return f"""
 Task: Classify the sentiment of this Dutch newspaper sentence about geothermal energy.
 
@@ -417,9 +329,7 @@ Interpretation rules:
 - negative: emphasizes risk, costs, obstacles, criticism, harm, uncertainty, or failure
 - neutral: mainly factual, procedural, descriptive, or mixed without clear evaluative polarity
 - positive: emphasizes benefits, support, progress, feasibility, opportunity, or success
-
-Use the following labeled examples as guidance:
-{examples_block}
+{examples_section}
 
 Return valid JSON only with these keys:
 - sentiment
@@ -503,13 +413,14 @@ def parse_ollama_sentiment_response(raw_response: str, model_id: str) -> dict[st
 def call_ollama_sentiment(
     text: str,
     model_id: str,
+    prompt_variant: str,
     ollama_url: str,
     timeout: int,
 ) -> dict[str, Any]:
     payload = {
         "model": model_id,
         "system": OLLAMA_SYSTEM_PROMPT,
-        "prompt": build_ollama_prompt(text),
+        "prompt": build_ollama_prompt(text, prompt_variant=prompt_variant),
         "stream": False,
         "options": {"temperature": 0.0, "num_predict": 120},
     }
@@ -537,43 +448,17 @@ def call_ollama_sentiment(
     return parse_ollama_sentiment_response(raw_response=raw_response, model_id=model_id)
 
 
-def classify_texts(
-    classifier: Any,
-    texts: list[str],
-    model_id: str,
-    batch_size: int,
-    max_length: int,
-) -> list[dict[str, Any]]:
-    raw_predictions = classifier(
-        texts,
-        batch_size=batch_size,
-        truncation=True,
-        max_length=max_length,
-    )
-    rows: list[dict[str, Any]] = []
-    for prediction in raw_predictions:
-        raw_label = str(prediction.get("label", "") or "").strip()
-        score = float(prediction.get("score", 0.0) or 0.0)
-        rows.append(
-            {
-                "predicted_sentiment": normalize_sentiment_label(raw_label, model_id=model_id),
-                "raw_label": raw_label,
-                "confidence": max(0.0, min(1.0, score)),
-            }
-        )
-    return rows
-
-
 def classify_texts_with_ollama(
     texts: list[str],
     model_id: str,
+    prompt_variant: str,
     ollama_url: str,
     timeout: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     progress = tqdm(
         texts,
-        desc=f"Ollama sentiment ({model_id})",
+        desc=f"Ollama sentiment ({model_id}, {prompt_variant})",
         unit="sentence",
     )
     for text in progress:
@@ -581,6 +466,7 @@ def classify_texts_with_ollama(
             call_ollama_sentiment(
                 text=text,
                 model_id=model_id,
+                prompt_variant=prompt_variant,
                 ollama_url=ollama_url,
                 timeout=timeout,
             )
@@ -629,28 +515,20 @@ def build_predictions_long(
         model_df["model_slug"] = model_cfg["model_slug"]
         model_df["model_display_name"] = model_cfg["display_name"]
         model_df["language_scope"] = model_cfg["language_scope"]
+        model_df["prompt_variant"] = model_cfg.get("prompt_variant")
         model_df["predicted_sentiment"] = pd.Series([None] * len(model_df), dtype="object")
         model_df["raw_label"] = pd.Series([None] * len(model_df), dtype="object")
         model_df["confidence"] = pd.Series([float("nan")] * len(model_df), dtype="float64")
         model_df["model_status"] = pd.Series([None] * len(model_df), dtype="object")
         model_df["model_error"] = pd.Series([None] * len(model_df), dtype="object")
         try:
-            if model_cfg.get("backend") == "ollama":
-                predictions = classify_texts_with_ollama(
-                    texts=texts,
-                    model_id=model_id,
-                    ollama_url=ollama_url,
-                    timeout=ollama_timeout,
-                )
-            else:
-                classifier = load_classifier(model_id)
-                predictions = classify_texts(
-                    classifier=classifier,
-                    texts=texts,
-                    model_id=model_id,
-                    batch_size=batch_size,
-                    max_length=max_length,
-                )
+            predictions = classify_texts_with_ollama(
+                texts=texts,
+                model_id=model_id,
+                prompt_variant=str(model_cfg.get("prompt_variant") or "few_shot"),
+                ollama_url=ollama_url,
+                timeout=ollama_timeout,
+            )
             model_df["predicted_sentiment"] = [row["predicted_sentiment"] for row in predictions]
             model_df["raw_label"] = [row["raw_label"] for row in predictions]
             model_df["confidence"] = [row["confidence"] for row in predictions]
@@ -730,7 +608,10 @@ def main() -> None:
     input_csv = resolve_input_csv(args.input_csv)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    model_configs = resolve_model_configs(args.ollama_model)
+    ollama_models = parse_ollama_models(args.ollama_models)
+    if args.ollama_model and args.ollama_model not in ollama_models:
+        ollama_models.append(args.ollama_model)
+    model_configs = resolve_model_configs(ollama_models)
 
     source_df = prepare_source_df(pd.read_csv(input_csv))
     sampled = sample_rows(source_df, sample_size=unique_sample_size, random_seed=args.random_seed)

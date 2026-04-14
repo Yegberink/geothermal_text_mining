@@ -6,18 +6,26 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import signal
-import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Dict, Optional
 
 import pandas as pd
 from tqdm.auto import tqdm
-from transformers import pipeline
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL = "nlptown/bert-base-multilingual-uncased-sentiment"
+DEFAULT_OLLAMA_URL = "http://localhost:11434/api/generate"
+DEFAULT_MODEL = "llama3.1:8b"
+DEFAULT_LANGUAGE = "dutch"
+DEFAULT_PROMPT_VARIANT = "zero_shot"
+SENTIMENTS = ["negative", "neutral", "positive"]
+OLLAMA_SYSTEM_PROMPT = (
+    "You are a careful sentiment classification assistant for newspaper sentences about geothermal energy. "
+    "You must return a single sentiment label and a short rationale in valid JSON only."
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,9 +37,13 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--cache", type=str, default="cache/sentence_sentiment_cache.jsonl")
     ap.add_argument("--partial-csv", type=str, default="cache/sentence_sentiment_partial_results.csv")
     ap.add_argument("--model", type=str, default=DEFAULT_MODEL)
+    ap.add_argument("--ollama-url", type=str, default=DEFAULT_OLLAMA_URL)
     ap.add_argument("--text-col", type=str, default="sentence_text")
-    ap.add_argument("--batch-size", type=int, default=32)
-    ap.add_argument("--max-length", type=int, default=256)
+    ap.add_argument("--language", type=str, default=DEFAULT_LANGUAGE)
+    ap.add_argument("--prompt-variant", type=str, default=DEFAULT_PROMPT_VARIANT)
+    ap.add_argument("--timeout", type=int, default=120)
+    ap.add_argument("--sleep-s", type=float, default=0.0)
+    ap.add_argument("--save-every", type=int, default=25)
     return ap.parse_args()
 
 
@@ -55,8 +67,16 @@ def make_uid(row: Dict[str, object]) -> str:
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
 
-def _fingerprint(text: str) -> str:
-    return hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
+def _fingerprint(text: str, model_name: str, prompt_variant: str, language: str) -> str:
+    h = hashlib.sha256()
+    h.update((model_name or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((prompt_variant or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((language or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((text or "").strip().encode("utf-8"))
+    return h.hexdigest()
 
 
 def save_checkpoint(out: pd.DataFrame, checkpoint_path: Path, partial_csv_path: Optional[Path]) -> None:
@@ -84,52 +104,145 @@ def _install_interrupt_handlers() -> None:
     signal.signal(signal.SIGTERM, _handle_interrupt)
 
 
-def load_classifier(model_name: str):
-    return pipeline(
-        task="sentiment-analysis",
-        model=model_name,
-        tokenizer=model_name,
+def normalize_sentiment_label(label: str) -> str:
+    value = str(label or "").strip().lower()
+    if value in SENTIMENTS:
+        return value
+    raise ValueError(f"Unsupported sentiment label: {label!r}")
+
+
+def build_ollama_prompt(text: str, language: str, prompt_variant: str) -> str:
+    variant_line = (
+        "Do not use any few-shot examples; rely only on the definitions below."
+        if prompt_variant == "zero_shot"
+        else "Use the task definitions below."
     )
+    return f"""
+Task: Classify the sentiment of this newspaper sentence about geothermal energy.
+
+Sentence language: {language}
+
+Use only these labels:
+- negative
+- neutral
+- positive
+
+Interpretation rules:
+- negative: emphasizes risk, costs, obstacles, criticism, harm, uncertainty, conflict, or failure
+- neutral: mainly factual, procedural, descriptive, or mixed without clear evaluative polarity
+- positive: emphasizes benefits, support, progress, feasibility, opportunity, or success
+
+{variant_line}
+
+Return valid JSON only with these keys:
+- sentiment
+- confidence
+- rationale_short
+
+Requirements:
+- sentiment must be exactly one of: negative, neutral, positive
+- confidence must be a number from 0 to 1
+- rationale_short must be <= 20 words
+
+Sentence:
+{text}
+""".strip()
 
 
-def parse_star_rating(label: str) -> Optional[int]:
-    match = re.search(r"([1-5])", str(label))
-    if not match:
+def extract_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start == -1:
         return None
-    return int(match.group(1))
+
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(start, len(text)):
+        char = text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+
+    return None
 
 
-def map_sentiment(label: str) -> str:
-    stars = parse_star_rating(label)
-    if stars is None:
-        return "neutral"
-    if stars <= 2:
-        return "negative"
-    if stars == 3:
-        return "neutral"
-    return "positive"
-
-
-def classify_texts(classifier, texts: list[str], batch_size: int, max_length: int) -> list[dict]:
-    preds = classifier(
-        texts,
-        batch_size=batch_size,
-        truncation=True,
-        max_length=max_length,
-    )
-    results = []
-    for pred in preds:
-        raw_label = str(pred.get("label", "") or "").strip()
-        score = float(pred.get("score", 0.0) or 0.0)
-        sentiment = map_sentiment(raw_label)
-        results.append(
-            {
-                "sentiment": sentiment,
-                "confidence": max(0.0, min(1.0, score)),
-                "evidence_short": raw_label or "model_label_missing",
+def parse_ollama_sentiment_response(raw_response: str) -> dict[str, object]:
+    candidate = extract_json_object(raw_response)
+    if candidate is not None:
+        try:
+            obj = json.loads(candidate)
+            raw_label = str(obj.get("sentiment", "") or "").strip()
+            return {
+                "sentiment": normalize_sentiment_label(raw_label),
+                "confidence": max(0.0, min(1.0, float(obj.get("confidence", 0.0) or 0.0))),
+                "evidence_short": str(obj.get("rationale_short", "") or "").strip(),
             }
-        )
-    return results
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+    lowered = raw_response.lower()
+    for sentiment in SENTIMENTS:
+        if sentiment in lowered:
+            return {
+                "sentiment": sentiment,
+                "confidence": 0.0,
+                "evidence_short": "",
+            }
+
+    raise ValueError(f"Ollama did not return a parseable sentiment label: {raw_response!r}")
+
+
+def call_ollama_sentiment(
+    text: str,
+    model_name: str,
+    ollama_url: str,
+    language: str,
+    prompt_variant: str,
+    timeout: int,
+) -> dict[str, object]:
+    payload = {
+        "model": model_name,
+        "system": OLLAMA_SYSTEM_PROMPT,
+        "prompt": build_ollama_prompt(text=text, language=language, prompt_variant=prompt_variant),
+        "stream": False,
+        "options": {"temperature": 0.0, "num_predict": 120},
+    }
+    request = urllib.request.Request(
+        ollama_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 404 and "not found" in detail.lower():
+            raise RuntimeError(
+                f"Ollama model '{model_name}' was not found at {ollama_url}. "
+                f"Pull it first with: ollama pull {model_name}"
+            ) from exc
+        raise RuntimeError(f"Ollama HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Ollama at {ollama_url}: {exc.reason}") from exc
+
+    raw_response = str(body.get("response", "") or "").strip()
+    return parse_ollama_sentiment_response(raw_response)
 
 
 def batch_sentiment_resumable(
@@ -138,9 +251,13 @@ def batch_sentiment_resumable(
     checkpoint_path: Path,
     cache_path: Path,
     partial_csv_path: Optional[Path],
-    batch_size: int,
-    max_length: int,
     model_name: str,
+    ollama_url: str,
+    language: str,
+    prompt_variant: str,
+    timeout: int,
+    sleep_s: float,
+    save_every: int,
 ) -> pd.DataFrame:
     if checkpoint_path.exists():
         out = pd.read_parquet(checkpoint_path)
@@ -187,62 +304,53 @@ def batch_sentiment_resumable(
         return row.get("sentiment_status") in ("ok", "empty")
 
     todo_idx = [i for i, row in out.iterrows() if not is_done(row)]
-    pbar = tqdm(total=len(todo_idx), desc="Sentence sentiment", unit="row")
-    classifier = load_classifier(model_name)
+    pbar = tqdm(total=len(todo_idx), desc=f"Sentence sentiment ({model_name})", unit="row")
+    processed_since_save = 0
 
     try:
-        for start in range(0, len(todo_idx), batch_size):
-            batch_idx = todo_idx[start : start + batch_size]
-            uncached_idx: list[object] = []
-            uncached_texts: list[str] = []
+        for i in todo_idx:
+            text = str(out.at[i, text_col] if text_col in out.columns else "") or ""
+            if not text.strip():
+                out.at[i, "sentiment"] = "neutral"
+                out.at[i, "sentiment_norm"] = "neutral"
+                out.at[i, "sentiment_confidence"] = 0.0
+                out.at[i, "sentiment_evidence_short"] = "Empty sentence."
+                out.at[i, "sentiment_status"] = "empty"
+                out.at[i, "sentiment_error"] = None
+                pbar.update(1)
+                processed_since_save += 1
+                continue
 
-            for i in batch_idx:
-                text = str(out.at[i, text_col] if text_col in out.columns else "") or ""
-                if not text.strip():
-                    out.at[i, "sentiment"] = "neutral"
-                    out.at[i, "sentiment_norm"] = "neutral"
-                    out.at[i, "sentiment_confidence"] = 0.0
-                    out.at[i, "sentiment_evidence_short"] = "Empty sentence."
-                    out.at[i, "sentiment_status"] = "empty"
-                    out.at[i, "sentiment_error"] = None
-                    continue
+            key = _fingerprint(text, model_name=model_name, prompt_variant=prompt_variant, language=language)
+            cached = cache_get(key)
+            try:
+                result = cached if cached is not None else call_ollama_sentiment(
+                    text=text,
+                    model_name=model_name,
+                    ollama_url=ollama_url,
+                    language=language,
+                    prompt_variant=prompt_variant,
+                    timeout=timeout,
+                )
+                if cached is None:
+                    cache_put(key, result)
+                out.at[i, "sentiment"] = result["sentiment"]
+                out.at[i, "sentiment_norm"] = result["sentiment"]
+                out.at[i, "sentiment_confidence"] = float(result["confidence"])
+                out.at[i, "sentiment_evidence_short"] = result["evidence_short"]
+                out.at[i, "sentiment_status"] = "ok"
+                out.at[i, "sentiment_error"] = None
+            except Exception as exc:
+                out.at[i, "sentiment_status"] = "error"
+                out.at[i, "sentiment_error"] = repr(exc)
 
-                key = _fingerprint(text)
-                cached = cache_get(key)
-                if cached is not None:
-                    out.at[i, "sentiment"] = cached["sentiment"]
-                    out.at[i, "sentiment_norm"] = cached["sentiment"]
-                    out.at[i, "sentiment_confidence"] = float(cached["confidence"])
-                    out.at[i, "sentiment_evidence_short"] = cached["evidence_short"]
-                    out.at[i, "sentiment_status"] = "ok"
-                    out.at[i, "sentiment_error"] = None
-                else:
-                    uncached_idx.append(i)
-                    uncached_texts.append(text)
-
-            if uncached_texts:
-                try:
-                    batch_results = classify_texts(
-                        classifier=classifier,
-                        texts=uncached_texts,
-                        batch_size=batch_size,
-                        max_length=max_length,
-                    )
-                    for i, text, res in zip(uncached_idx, uncached_texts, batch_results):
-                        cache_put(_fingerprint(text), res)
-                        out.at[i, "sentiment"] = res["sentiment"]
-                        out.at[i, "sentiment_norm"] = res["sentiment"]
-                        out.at[i, "sentiment_confidence"] = float(res["confidence"])
-                        out.at[i, "sentiment_evidence_short"] = res["evidence_short"]
-                        out.at[i, "sentiment_status"] = "ok"
-                        out.at[i, "sentiment_error"] = None
-                except Exception as exc:
-                    for i in uncached_idx:
-                        out.at[i, "sentiment_status"] = "error"
-                        out.at[i, "sentiment_error"] = repr(exc)
-
-            pbar.update(len(batch_idx))
-            save_checkpoint(out, checkpoint_path, partial_csv_path)
+            pbar.update(1)
+            processed_since_save += 1
+            if sleep_s:
+                time.sleep(sleep_s)
+            if processed_since_save >= save_every:
+                save_checkpoint(out, checkpoint_path, partial_csv_path)
+                processed_since_save = 0
     except KeyboardInterrupt:
         save_checkpoint(out, checkpoint_path, partial_csv_path)
         raise
@@ -266,57 +374,49 @@ def sentiment_result_columns(df: pd.DataFrame) -> list[str]:
 
 
 def main() -> None:
-    _install_interrupt_handlers()
     args = parse_args()
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
 
+    _install_interrupt_handlers()
+
     input_csv = Path(args.input_csv)
     output_csv = Path(args.output_csv)
-    checkpoint = Path(args.checkpoint)
-    cache = Path(args.cache)
-    partial_csv = Path(args.partial_csv)
-
-    output_csv.parent.mkdir(parents=True, exist_ok=True)
-    checkpoint.parent.mkdir(parents=True, exist_ok=True)
-    cache.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = Path(args.checkpoint)
+    cache_path = Path(args.cache)
+    partial_csv_path = Path(args.partial_csv) if args.partial_csv else None
 
     df = pd.read_csv(input_csv)
-    df = df.loc[:, ~df.columns.duplicated()].copy()
     if args.text_col not in df.columns:
-        raise ValueError(f"Expected text column '{args.text_col}' in input CSV.")
+        raise ValueError(f"Column {args.text_col!r} not found in {input_csv}")
 
-    source_df = df.copy()
-    dedup_df = df.drop_duplicates(subset=[args.text_col], keep="first").copy()
+    df = df.copy()
+    if "sentence_uid" not in df.columns:
+        df["sentence_uid"] = df.apply(make_uid, axis=1)
+    df = df.set_index("sentence_uid", drop=False)
 
-    if "uid" not in dedup_df.columns and "sentence_uid" not in dedup_df.columns:
-        dedup_df["uid"] = dedup_df.apply(make_uid, axis=1)
-    uid_col = "sentence_uid" if "sentence_uid" in dedup_df.columns else "uid"
-    dedup_df = dedup_df.set_index(uid_col, drop=False)
+    out = batch_sentiment_resumable(
+        df=df,
+        text_col=args.text_col,
+        checkpoint_path=checkpoint_path,
+        cache_path=cache_path,
+        partial_csv_path=partial_csv_path,
+        model_name=args.model,
+        ollama_url=args.ollama_url,
+        language=args.language,
+        prompt_variant=args.prompt_variant,
+        timeout=args.timeout,
+        sleep_s=args.sleep_s,
+        save_every=args.save_every,
+    )
 
-    try:
-        dedup_out = batch_sentiment_resumable(
-            df=dedup_df,
-            text_col=args.text_col,
-            checkpoint_path=checkpoint,
-            cache_path=cache,
-            partial_csv_path=partial_csv,
-            batch_size=args.batch_size,
-            max_length=args.max_length,
-            model_name=args.model,
-        )
-    except KeyboardInterrupt as exc:
-        print(str(exc) or "Interrupted.", file=sys.stderr)
-        print(f"Saved intermediate CSV: {partial_csv}", file=sys.stderr)
-        print(f"Saved checkpoint: {checkpoint}", file=sys.stderr)
-        raise SystemExit(130)
-
-    result_cols = sentiment_result_columns(dedup_out)
-    dedup_results = dedup_out.reset_index(drop=True)[[args.text_col] + result_cols].copy()
-    out = source_df.merge(dedup_results, on=args.text_col, how="left")
-    out = out.reset_index(drop=True)
-    out.to_csv(output_csv, index=False, encoding="utf-8")
-    print(f"Wrote: {output_csv} (rows={len(out)})")
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    to_write = out.reset_index(drop=True)
+    to_write.to_csv(output_csv, index=False, encoding="utf-8")
+    ok_n = int((to_write.get("sentiment_status") == "ok").sum()) if "sentiment_status" in to_write.columns else 0
+    err_n = int((to_write.get("sentiment_status") == "error").sum()) if "sentiment_status" in to_write.columns else 0
+    print(f"Wrote sentiment output: {output_csv}")
+    print(f"Sentiment rows={len(to_write)}, ok={ok_n}, error={err_n}")
 
 
 if __name__ == "__main__":
