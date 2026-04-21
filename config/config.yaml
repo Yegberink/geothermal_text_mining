@@ -1,6 +1,6 @@
 python: python
-language: italian
-country: Italy
+language: dutch
+country: Netherlands
 make_annotation_df: true
 
 annotation:
@@ -95,7 +95,11 @@ paths:
   province_gpkg: data/admin_areas_provinces_2025.gpkg
   district_gpkg: data/statistical_areas_districts_2025.gpkg
   neighborhood_gpkg: data/statistical_areas_neighborhoods_2025.gpkg
-  keywords_topics_csv: vocab/keywords_topics.csv
+  keywords_topics_base_csv: vocab/keywords_topics.csv
+  keywords_topics_csv: cache/keywords_topics_effective.csv
+  keyword_review_export_csv: annotation/frame_keyword_reviews.csv
+  keyword_review_candidates_csv: annotation/frame_keyword_review_candidates.csv
+  keyword_framework_audit_csv: output/text/keyword_framework_updates.csv
 
   articles_csv: output/text/articles_cleaned.csv
   paragraphs_csv: output/text/newspapers_cleaned_paragraphs.csv
@@ -115,6 +119,7 @@ paths:
   sentences_with_categories_admin_gpkg: output/text/sentences_with_categories_admin.gpkg
   sentences_with_categories_admin_csv: output/text/sentences_with_categories_admin.csv
   figures_dir: output/figures
+  frame_keywords_dir: output/figures/frame_keywords
   province_sentiment_table_csv: output/figures/province_sentiment_table.csv
   provinces_sentiment_balance_png: output/figures/provinces_sentiment_balance.png
   provinces_sentiment_distribution_png: output/figures/provinces_sentiment_distribution.png

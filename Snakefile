@@ -47,6 +47,7 @@ def _default_country_codes(country):
 ALL_TARGETS = [
     PATHS["sentences_with_categories_admin_csv"],
     PATHS["sentences_with_categories_admin_gpkg"],
+    PATHS["frame_keywords_dir"],
     PATHS["province_sentiment_table_csv"],
     PATHS["provinces_sentiment_balance_png"],
     PATHS["provinces_sentiment_distribution_png"],
@@ -153,6 +154,41 @@ rule split_paragraphs_to_sentences:
           --input-csv {input} \
           --output-csv {output} \
           --language {LANGUAGE}
+        """
+
+
+rule update_keyword_framework:
+    input:
+        base_csv=PATHS["keywords_topics_base_csv"],
+    output:
+        keywords_csv=PATHS["keywords_topics_csv"],
+        audit_csv=PATHS["keyword_framework_audit_csv"],
+    params:
+        review_csv=PATHS["keyword_review_export_csv"],
+    shell:
+        """
+        {PYTHON} scripts/update_keywords_framework.py \
+          --project-dir {PROJECT_DIR} \
+          --base-csv {input.base_csv} \
+          --review-csv {params.review_csv} \
+          --output-csv {output.keywords_csv} \
+          --audit-csv {output.audit_csv}
+        """
+
+
+rule export_frame_keyword_review_candidates:
+    input:
+        sentences_csv=PATHS["sentence_locations_csv"],
+        keywords_csv=PATHS["keywords_topics_csv"],
+    output:
+        PATHS["keyword_review_candidates_csv"],
+    shell:
+        """
+        {PYTHON} scripts/export_frame_keyword_review_candidates.py \
+          --project-dir {PROJECT_DIR} \
+          --sentences-csv {input.sentences_csv} \
+          --keywords-csv {input.keywords_csv} \
+          --output-csv {output}
         """
 
 
@@ -325,9 +361,11 @@ rule visualize_absa_results:
     input:
         admin_csv=PATHS["sentences_with_categories_admin_csv"],
         categories_csv=PATHS["sentences_with_categories_short_csv"],
+        keywords_csv=PATHS["keywords_topics_csv"],
         province_gpkg=PATHS["province_gpkg"],
         script=str(PROJECT_DIR / "scripts" / "visualize_absa_results.py"),
     output:
+        frame_keywords=directory(PATHS["frame_keywords_dir"]),
         table=PATHS["province_sentiment_table_csv"],
         balance=PATHS["provinces_sentiment_balance_png"],
         distribution=PATHS["provinces_sentiment_distribution_png"],
@@ -341,6 +379,7 @@ rule visualize_absa_results:
           --project-dir {PROJECT_DIR} \
           --admin-csv {input.admin_csv} \
           --categories-csv {input.categories_csv} \
+          --keywords-csv {input.keywords_csv} \
           --province-gpkg {input.province_gpkg} \
           --output-dir {params.output_dir}
         """

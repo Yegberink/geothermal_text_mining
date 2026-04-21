@@ -265,8 +265,10 @@ def batch_sentiment_resumable(
             out = out.set_index(out.index.name, drop=False)
         out = out.reindex(df.index)
         for c in df.columns:
-            if c not in out.columns:
-                out[c] = df[c]
+            # Always refresh source columns from the current input so reruns with
+            # an updated frame framework keep the latest sentence metadata while
+            # preserving previously computed sentiment outputs by sentence_uid.
+            out[c] = df[c]
     else:
         out = df.copy()
         out["sentiment"] = None

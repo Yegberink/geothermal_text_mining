@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from html import escape
 from pathlib import Path
 
@@ -29,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
     ap.add_argument("--admin-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
     ap.add_argument("--categories-csv", type=str, default="output/text/sentences_with_categories_short.csv")
+    ap.add_argument("--keywords-csv", type=str, default="vocab/keywords_topics.csv")
     ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
     ap.add_argument("--output-dir", type=str, default="output/figures")
     return ap.parse_args()
@@ -64,6 +66,48 @@ def configure_plot_style() -> None:
             "legend.title_fontsize": 11,
         }
     )
+
+
+def parse_semicolon_values(value: object) -> list[str]:
+    if isinstance(value, list):
+        values = value
+    elif pd.isna(value):
+        values = []
+    else:
+        values = str(value).split(";")
+    return [str(v).strip() for v in values if str(v).strip()]
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower())
+    return slug.strip("_") or "frame"
+
+
+def load_frame_keyword_vocab(path: Path) -> tuple[list[str], dict[str, set[str]], dict[str, dict[str, str]]]:
+    vocab_df = pd.read_csv(path)
+    vocab_df = vocab_df.loc[:, ~vocab_df.columns.astype(str).str.match(r"^Unnamed")]
+
+    frame_order: list[str] = []
+    frame_keywords: dict[str, set[str]] = {}
+    display_lookup: dict[str, dict[str, str]] = {}
+
+    for col in vocab_df.columns:
+        frame = str(col).strip()
+        if not frame:
+            continue
+        keywords = (
+            vocab_df[col]
+            .dropna()
+            .astype(str)
+            .str.strip()
+        )
+        keywords = keywords[keywords.ne("")]
+        if frame not in frame_order:
+            frame_order.append(frame)
+        frame_keywords[frame] = {kw.lower() for kw in keywords}
+        display_lookup[frame] = {kw.lower(): kw for kw in keywords}
+
+    return frame_order, frame_keywords, display_lookup
 
 
 def build_province_summary(admin_df: pd.DataFrame) -> pd.DataFrame:
@@ -315,11 +359,209 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
     plt.close(fig)
 
 
+def build_frame_keyword_sentiment_data(
+    categories_df: pd.DataFrame,
+    frame_keywords: dict[str, set[str]],
+    display_lookup: dict[str, dict[str, str]],
+) -> pd.DataFrame:
+    category_col = "matched_categories_str"
+    keyword_col = "matched_keywords_str"
+    sentiment_col = "sentiment_norm" if "sentiment_norm" in categories_df.columns else "sentiment"
+    required = [category_col, keyword_col, sentiment_col]
+    missing = [c for c in required if c not in categories_df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in categories CSV: {missing}")
+
+    records: list[dict[str, str]] = []
+    df = categories_df[[category_col, keyword_col, sentiment_col]].copy()
+    df["_sent"] = normalize_sentiment(df[sentiment_col])
+    df = df[df["_sent"].isin(SENTIMENT_ORDER)].copy()
+
+    for categories_value, keywords_value, sentiment in df[[category_col, keyword_col, "_sent"]].itertuples(index=False, name=None):
+        categories = parse_semicolon_values(categories_value)
+        keywords = parse_semicolon_values(keywords_value)
+        if not categories or not keywords:
+            continue
+
+        keyword_norms = {kw.lower() for kw in keywords}
+        for frame in categories:
+            valid_keywords = frame_keywords.get(frame)
+            if not valid_keywords:
+                continue
+            matched = sorted(keyword_norms & valid_keywords)
+            for keyword_norm in matched:
+                records.append(
+                    {
+                        "frame": frame,
+                        "keyword": display_lookup.get(frame, {}).get(keyword_norm, keyword_norm),
+                        "sentiment": sentiment,
+                    }
+                )
+
+    if not records:
+        return pd.DataFrame(columns=["frame", "keyword", "sentiment"])
+    return pd.DataFrame.from_records(records)
+
+
+def plot_frame_keyword_sentiment_distribution(
+    pairs_df: pd.DataFrame,
+    frame_order: list[str],
+    out_dir: Path,
+) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    summary_rows: list[dict[str, object]] = []
+    for frame in frame_order:
+        frame_path = out_dir / f"{slugify(frame)}.png"
+        frame_df = pairs_df[pairs_df["frame"] == frame].copy()
+
+        if frame_df.empty:
+            configure_plot_style()
+            fig, ax = plt.subplots(figsize=(8, 3), dpi=250)
+            ax.text(0.5, 0.5, "No validated keyword matches for this frame.", ha="center", va="center")
+            ax.set_axis_off()
+            ax.set_title(frame)
+            plt.tight_layout()
+            plt.savefig(frame_path, bbox_inches="tight")
+            plt.close(fig)
+            summary_rows.append(
+                {
+                    "frame": frame,
+                    "figure_path": frame_path.name,
+                    "n_keyword_mentions": 0,
+                    "n_keywords_plotted": 0,
+                }
+            )
+            continue
+
+        counts = (
+            frame_df.groupby(["keyword", "sentiment"])
+            .size()
+            .unstack(fill_value=0)
+            .reindex(columns=SENTIMENT_ORDER, fill_value=0)
+        )
+        counts["total"] = counts.sum(axis=1)
+        counts = counts.sort_values(["total", "positive", "neutral", "negative"], ascending=[False, False, False, False])
+        top_counts = counts.copy().sort_values("total", ascending=True)
+        denom = top_counts["total"].replace({0: pd.NA})
+        plot_data = top_counts[SENTIMENT_ORDER].div(denom, axis=0) * 100
+
+        configure_plot_style()
+        fig_height = max(3.6, 1.15 * len(top_counts) + 1.6)
+        fig, ax = plt.subplots(figsize=(9.5, fig_height), dpi=250)
+        left = pd.Series(0, index=plot_data.index, dtype=float)
+
+        for sentiment in SENTIMENT_ORDER:
+            ax.barh(
+                plot_data.index,
+                plot_data[sentiment],
+                left=left,
+                label=sentiment.capitalize(),
+                color=SENTIMENT_COLORS[sentiment],
+                edgecolor="white",
+                linewidth=0.7,
+            )
+            left += plot_data[sentiment]
+
+        ax.set_xlim(0, 100)
+        ax.set_xlabel("Share of keyword mentions")
+        ax.set_title(f"{frame}: top 5 keywords by sentiment")
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:.0f}%"))
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(0.8)
+            spine.set_color("black")
+        ax.set_axisbelow(True)
+
+        for keyword, total in top_counts["total"].items():
+            ax.text(
+                101,
+                keyword,
+                f"n={int(total)}",
+                va="center",
+                ha="left",
+                fontsize=9,
+                color="#3a3a3a",
+            )
+
+        ax.legend(
+            title="Sentiment",
+            frameon=False,
+            ncol=3,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.16),
+        )
+
+        plt.tight_layout()
+        plt.savefig(frame_path, bbox_inches="tight")
+        plt.close(fig)
+
+        summary_rows.append(
+            {
+                "frame": frame,
+                "figure_path": frame_path.name,
+                "n_keyword_mentions": int(frame_df.shape[0]),
+                "n_keywords_plotted": int(top_counts.shape[0]),
+            }
+        )
+
+    pd.DataFrame(summary_rows).to_csv(out_dir / "frame_keyword_figure_index.csv", index=False)
+
+
 def truncate_text(text: str, limit: int = 220) -> str:
     text = str(text or "").strip()
     if len(text) <= limit:
         return text
     return text[: limit - 1].rstrip() + "..."
+
+
+def write_empty_locations_html(out_path: Path, message: str) -> None:
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Interactive matched locations</title>
+  <style>
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: Georgia, "Times New Roman", serif;
+      background: #f6f1e8;
+      color: #3d342b;
+      padding: 24px;
+      box-sizing: border-box;
+    }}
+    .panel {{
+      max-width: 720px;
+      background: rgba(255,255,255,0.62);
+      border: 1px solid rgba(83,72,61,0.18);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(61,52,43,0.08);
+      padding: 24px 28px;
+    }}
+    h1 {{
+      margin: 0 0 12px 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+    }}
+    p {{
+      margin: 0;
+      line-height: 1.6;
+    }}
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>Interactive matched locations</h1>
+    <p>{escape(message)}</p>
+  </div>
+</body>
+</html>
+"""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html, encoding="utf-8")
 
 
 def plot_locations_interactive(
@@ -330,14 +572,22 @@ def plot_locations_interactive(
     required = {"lon", "lat"}
     missing = required - set(admin_df.columns)
     if missing:
-        raise ValueError(f"Missing required columns for location heatmap: {sorted(missing)}")
+        write_empty_locations_html(
+            out_path,
+            f"Location map unavailable because the administrative CSV is missing coordinate columns: {sorted(missing)}.",
+        )
+        return
 
     points_df = admin_df.copy()
     points_df["lon"] = pd.to_numeric(points_df["lon"], errors="coerce")
     points_df["lat"] = pd.to_numeric(points_df["lat"], errors="coerce")
     points_df = points_df.dropna(subset=["lon", "lat"]).copy()
     if points_df.empty:
-        raise ValueError("No valid lon/lat rows available for interactive location map.")
+        write_empty_locations_html(
+            out_path,
+            "No valid lon/lat rows were available for the interactive location map. Upstream geocoding produced no mappable sentence locations for this run.",
+        )
+        return
 
     text_col = "sentence_text" if "sentence_text" in points_df.columns else "paragraph_text"
     if text_col not in points_df.columns:
@@ -539,10 +789,12 @@ def main() -> None:
 
     admin_df = pd.read_csv(args.admin_csv)
     categories_df = pd.read_csv(args.categories_csv)
+    frame_order, frame_keywords, display_lookup = load_frame_keyword_vocab(Path(args.keywords_csv))
     province_gpkg = Path(args.province_gpkg)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    frame_keywords_dir = output_dir / "frame_keywords"
 
     province_tbl = build_province_summary(admin_df)
     province_tbl.to_csv(output_dir / "province_sentiment_table.csv", index=False)
@@ -564,12 +816,23 @@ def main() -> None:
         province_gpkg,
         output_dir / "locations_map.html",
     )
+    frame_keyword_pairs = build_frame_keyword_sentiment_data(
+        categories_df,
+        frame_keywords,
+        display_lookup,
+    )
+    plot_frame_keyword_sentiment_distribution(
+        frame_keyword_pairs,
+        frame_order,
+        frame_keywords_dir,
+    )
 
     print("Wrote:", output_dir / "province_sentiment_table.csv")
     print("Wrote:", output_dir / "provinces_sentiment_balance.png")
     print("Wrote:", output_dir / "provinces_sentiment_distribution.png")
     print("Wrote:", output_dir / "categories_sentiment_distribution.png")
     print("Wrote:", output_dir / "locations_map.html")
+    print("Wrote:", frame_keywords_dir)
 
 
 if __name__ == "__main__":
