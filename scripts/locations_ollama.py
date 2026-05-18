@@ -142,6 +142,28 @@ def save_checkpoint(out: pd.DataFrame, checkpoint_path: Path) -> None:
     tmp_path.replace(checkpoint_path)
 
 
+def write_partial_csv(out: pd.DataFrame, partial_csv_path: Optional[Path]) -> None:
+    if partial_csv_path is None:
+        return
+    partial_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    partial_out = out.copy()
+    partial_out["uid"] = partial_out.index
+    partial_out.to_csv(partial_csv_path, index=False, encoding="utf-8")
+
+
+def incomplete_count(out: pd.DataFrame) -> int:
+    if "llm_status" not in out.columns:
+        return len(out)
+    return int((~out["llm_status"].isin(["ok", "empty"])).sum())
+
+
+def write_final_csv_atomic(out: pd.DataFrame, out_csv: Path) -> None:
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_csv.with_suffix(out_csv.suffix + ".tmp")
+    out.to_csv(tmp_path, index=False, encoding="utf-8")
+    tmp_path.replace(out_csv)
+
+
 def batch_primary_locations_resumable(
     df: pd.DataFrame,
     text_col: str,
@@ -267,19 +289,16 @@ def batch_primary_locations_resumable(
 
     except KeyboardInterrupt:
         save_checkpoint(out, checkpoint_path)
-        if partial_csv_path is not None:
-            partial_csv_path.parent.mkdir(parents=True, exist_ok=True)
-            partial_out = out.copy()
-            partial_out["uid"] = partial_out.index
-            partial_out.to_csv(partial_csv_path, index=False, encoding="utf-8")
+        write_partial_csv(out, partial_csv_path)
         print(
             f"\nStopped by user. Progress saved to:\n"
             f"- {checkpoint_path}\n"
             + (f"- {partial_csv_path}\n" if partial_csv_path is not None else "")
         )
-        return out
+        raise
 
     save_checkpoint(out, checkpoint_path)
+    write_partial_csv(out, partial_csv_path)
     return out
 
 
@@ -341,13 +360,21 @@ def main():
         partial_csv_path=Path(args.partial_csv) if args.partial_csv else None,
     )
 
-    Path(args.out_csv).parent.mkdir(parents=True, exist_ok=True)
+    out_csv = Path(args.out_csv)
 
     # Restore uid as a regular column for the final CSV export.
     out = out.copy()
     out["uid"] = out.index
 
-    out.to_csv(args.out_csv, index=False, encoding="utf-8")
+    remaining = incomplete_count(out)
+    if remaining:
+        raise RuntimeError(
+            f"Location extraction is incomplete ({remaining} rows unfinished). "
+            f"Progress is saved in {checkpoint_path} and {args.partial_csv}; "
+            "not writing the final Snakemake output CSV."
+        )
+
+    write_final_csv_atomic(out, out_csv)
     print(f"Wrote: {args.out_csv}  (rows={len(out)})")
     if "llm_location" in out.columns:
         located = out["llm_location"].fillna("").astype(str).str.strip().str.upper().ne("NONE")

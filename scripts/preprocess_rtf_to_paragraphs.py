@@ -162,6 +162,14 @@ def load_preprocessing_config(config_path: Path) -> Tuple[Dict[str, str], List[s
     return month_translations, list(dict.fromkeys(weekday_names))
 
 
+def load_workflow_language(config_path: Path) -> str:
+    if not config_path.exists():
+        return "dutch"
+    with config_path.open("r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+    return str(config.get("language") or "dutch")
+
+
 def translate_month_names(s: str, month_translations: Dict[str, str]) -> str:
     out = str(s)
     for source_name, english_name in month_translations.items():
@@ -508,6 +516,92 @@ def merge_single_line_paragraphs(text: str) -> List[str]:
     return paras
 
 
+def estimate_sentence_count(text: str) -> int:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return 0
+    sentences = re.split(r"(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])", cleaned)
+    sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+    return len(sentences) if sentences else 1
+
+
+def format_numeric_stats(values: pd.Series) -> str:
+    values = pd.to_numeric(values, errors="coerce").dropna()
+    if values.empty:
+        return "n=0"
+    return (
+        f"n={len(values)}, mean={values.mean():.2f}, median={values.median():.2f}, "
+        f"p90={values.quantile(0.90):.2f}, p95={values.quantile(0.95):.2f}, "
+        f"p99={values.quantile(0.99):.2f}, max={values.max():.0f}"
+    )
+
+
+def sentence_counts_for_paragraphs(paragraph_text: pd.Series, language: str) -> pd.Series:
+    try:
+        from split_paragraphs_to_sentences import build_segmenter, split_sentences
+
+        nlp = build_segmenter(language)
+        return paragraph_text.map(lambda value: len(split_sentences(nlp, value)))
+    except Exception as exc:
+        print(
+            "[main] WARNING: Falling back to regex sentence counts for paragraph split stats: "
+            f"{exc!r}"
+        )
+        return paragraph_text.map(estimate_sentence_count)
+
+
+def print_paragraph_split_stats(df_paras: pd.DataFrame, language: str) -> None:
+    if df_paras.empty:
+        return
+
+    doc_key = "body_hash" if "body_hash" in df_paras.columns else None
+    if doc_key is not None:
+        paragraphs_per_doc = df_paras.groupby(doc_key).size()
+        print("[main] Paragraphs per document:", format_numeric_stats(paragraphs_per_doc))
+        print(f"[workflow_table] paragraphs_per_document_mean: {paragraphs_per_doc.mean():.2f}")
+        print(f"[workflow_table] paragraphs_per_document_median: {paragraphs_per_doc.median():.2f}")
+        print(f"[workflow_table] paragraphs_per_document_p95: {paragraphs_per_doc.quantile(0.95):.2f}")
+        print(f"[workflow_table] paragraphs_per_document_max: {int(paragraphs_per_doc.max())}")
+
+        outlier_threshold = max(20, paragraphs_per_doc.quantile(0.99))
+        outliers = paragraphs_per_doc[paragraphs_per_doc >= outlier_threshold].sort_values(ascending=False)
+        print(
+            f"[main] Documents with many paragraphs: "
+            f"{len(outliers)} documents with >= {outlier_threshold:.0f} paragraphs"
+        )
+        print(f"[workflow_table] paragraph_heavy_documents_threshold: {outlier_threshold:.0f}")
+        print(f"[workflow_table] paragraph_heavy_documents_count: {len(outliers)}")
+
+        if not outliers.empty:
+            meta_cols = [c for c in ["source", "document_title", "publish_date"] if c in df_paras.columns]
+            doc_meta = df_paras.drop_duplicates(doc_key).set_index(doc_key)
+            print("[main] Top documents by paragraph count:")
+            for body_hash, n_paragraphs in outliers.head(10).items():
+                meta = doc_meta.loc[body_hash, meta_cols].to_dict() if meta_cols else {}
+                title = str(meta.get("document_title", ""))[:90]
+                source = str(meta.get("source", ""))
+                date = str(meta.get("publish_date", ""))
+                print(
+                    f"  - paragraphs={int(n_paragraphs)} | "
+                    f"source={source} | date={date} | title={title}"
+                )
+
+    paragraph_text = df_paras["paragraph_text"].fillna("").astype(str)
+    paragraph_word_counts = paragraph_text.map(lambda value: len(value.split()))
+    paragraph_sentence_counts = sentence_counts_for_paragraphs(paragraph_text, language)
+
+    print("[main] Sentences per paragraph:", format_numeric_stats(paragraph_sentence_counts))
+    print("[main] Words per paragraph:", format_numeric_stats(paragraph_word_counts))
+    print(f"[workflow_table] sentences_per_paragraph_mean: {paragraph_sentence_counts.mean():.2f}")
+    print(f"[workflow_table] sentences_per_paragraph_median: {paragraph_sentence_counts.median():.2f}")
+    print(f"[workflow_table] sentences_per_paragraph_p95: {paragraph_sentence_counts.quantile(0.95):.2f}")
+    print(f"[workflow_table] sentences_per_paragraph_max: {int(paragraph_sentence_counts.max())}")
+    print(f"[workflow_table] words_per_paragraph_mean: {paragraph_word_counts.mean():.2f}")
+    print(f"[workflow_table] words_per_paragraph_median: {paragraph_word_counts.median():.2f}")
+    print(f"[workflow_table] words_per_paragraph_p95: {paragraph_word_counts.quantile(0.95):.2f}")
+    print(f"[workflow_table] words_per_paragraph_max: {int(paragraph_word_counts.max())}")
+
+
 def make_paragraph_uid(
     source: str, title: str, publish_date: str, paragraph_id: int, paragraph_text: str
 ) -> str:
@@ -550,6 +644,7 @@ def main() -> None:
     output_paragraph_csv.parent.mkdir(parents=True, exist_ok=True)
 
     month_translations, weekday_names = load_preprocessing_config(config_path)
+    workflow_language = load_workflow_language(config_path)
 
     if not input_rtf_dir.exists():
         raise FileNotFoundError(f"INPUT_RTF_DIR does not exist: {input_rtf_dir}")
@@ -615,6 +710,8 @@ def main() -> None:
         print(f"[workflow_table] articles_with_paragraphs: {len(paragraphs_per_article)}")
         print(f"[workflow_table] articles_with_multiple_paragraphs: {articles_with_multiple_paragraphs}")
         print(f"[workflow_table] mean_paragraphs_per_article: {paragraphs_per_article.mean():.2f}")
+
+    print_paragraph_split_stats(df_paras, workflow_language)
 
     if df_paras.empty:
         print(
