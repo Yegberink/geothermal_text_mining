@@ -32,6 +32,23 @@ ALIAS_MAP = {
     "zuidplaspolder": ("municipality", "Zuidplas"),
 }
 
+NETHERLANDS_COUNTRY_NAMES = {
+    "nederland",
+    "netherlands",
+    "the netherlands",
+    "holland",
+}
+
+EXTERNAL_LOCATION_POINTS = {
+    "kenia": ("Kenya", -0.0236, 37.9062),
+    "kenya": ("Kenya", -0.0236, 37.9062),
+    "calefornia": ("California, United States", 36.7783, -119.4179),
+    "california": ("California, United States", 36.7783, -119.4179),
+    "californie": ("California, United States", 36.7783, -119.4179),
+    "curacao": ("Curaçao", 12.1696, -68.9900),
+    "curaçao": ("Curaçao", 12.1696, -68.9900),
+}
+
 
 def parse_args():
     ap = argparse.ArgumentParser()
@@ -238,10 +255,22 @@ def main():
     df["geom_point_wkt"] = None
     df["geom_poly_wkt"] = None
 
+    external_key = df["_loc_norm"].isin(EXTERNAL_LOCATION_POINTS)
+    if external_key.any():
+        for idx, loc_norm in df.loc[external_key, "_loc_norm"].items():
+            display_name, lat, lon = EXTERNAL_LOCATION_POINTS[loc_norm]
+            df.at[idx, "geo_level"] = "external"
+            df.at[idx, "geo_name_matched"] = display_name
+            df.at[idx, "geo_source"] = "manual_external_alias"
+            df.at[idx, "geo_match_type"] = "manual_point"
+            df.at[idx, "geo_lat"] = float(lat)
+            df.at[idx, "geo_lon"] = float(lon)
+            df.at[idx, "geom_point_wkt"] = Point(float(lon), float(lat)).wkt
+
     df = join_admin(df, df["_gran"].eq("municipality"), "_join_key", muni_wgs84, muni_name_col, "municipality")
     df = join_admin(df, df["_gran"].eq("province"), "_join_key", prov_wgs84, prov_name_col, "province")
 
-    country_key = df["_gran"].eq("country")
+    country_key = df["_gran"].eq("country") & df["_loc_norm"].isin(NETHERLANDS_COUNTRY_NAMES)
     if country_key.any():
         df.loc[country_key, "geo_level"] = "country"
         df.loc[country_key, "geo_name_matched"] = df.loc[country_key, "_loc_first"].replace("", "country")

@@ -47,6 +47,11 @@ def _default_country_codes(country):
 ALL_TARGETS = [
     PATHS["sentences_with_categories_admin_csv"],
     PATHS["sentences_with_categories_admin_gpkg"],
+    PATHS["articles_per_year_csv"],
+    PATHS["articles_per_year_png"],
+    PATHS["top_newspapers_csv"],
+    PATHS["top_newspapers_png"],
+    PATHS["article_descriptives_summary_csv"],
     PATHS["frame_keywords_dir"],
     PATHS["province_sentiment_table_csv"],
     PATHS["provinces_sentiment_balance_png"],
@@ -354,6 +359,28 @@ rule aggregate_to_admin_areas:
           --province-gpkg {input.prov} \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv}
+        """
+
+
+rule visualize_article_descriptives:
+    input:
+        articles_csv=PATHS["articles_csv"],
+        script=str(PROJECT_DIR / "scripts" / "visualize_article_descriptives.py"),
+    output:
+        articles_per_year_csv=PATHS["articles_per_year_csv"],
+        articles_per_year_png=PATHS["articles_per_year_png"],
+        top_newspapers_csv=PATHS["top_newspapers_csv"],
+        top_newspapers_png=PATHS["top_newspapers_png"],
+        summary_csv=PATHS["article_descriptives_summary_csv"],
+    params:
+        output_dir=PATHS["figures_dir"],
+    shell:
+        """
+        {PYTHON} scripts/visualize_article_descriptives.py \
+          --project-dir {PROJECT_DIR} \
+          --articles-csv {input.articles_csv} \
+          --output-dir {params.output_dir} \
+          --top-n-newspapers 6
         """
 
 

@@ -8,6 +8,7 @@ import os
 import random
 import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -20,6 +21,16 @@ from shapely.geometry import Point
 from shapely.ops import unary_union
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+
+EXTERNAL_LOCATION_POINTS = {
+    "kenia": ("Kenya", -0.0236, 37.9062),
+    "kenya": ("Kenya", -0.0236, 37.9062),
+    "calefornia": ("California, United States", 36.7783, -119.4179),
+    "california": ("California, United States", 36.7783, -119.4179),
+    "californie": ("California, United States", 36.7783, -119.4179),
+    "curacao": ("Curaçao", 12.1696, -68.9900),
+    "curaçao": ("Curaçao", 12.1696, -68.9900),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,6 +56,16 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--points-layer", type=str, default="sentences_points")
     ap.add_argument("--polygons-layer", type=str, default="sentences_polygons")
     return ap.parse_args()
+
+
+def norm(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.replace("-", " ").replace("_", " ")
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^\w\s\.'()]", "", text)
+    return text.strip()
 
 
 def pick_col_by_regex(cols, patterns):
@@ -190,6 +211,19 @@ def main() -> None:
     df = pd.read_csv(input_csv, dtype=str)
     df["geo_lat"] = pd.to_numeric(df["geo_lat"], errors="coerce").astype("Float64")
     df["geo_lon"] = pd.to_numeric(df["geo_lon"], errors="coerce").astype("Float64")
+
+    external_key = df["_loc_first"].map(norm).isin(EXTERNAL_LOCATION_POINTS)
+    if external_key.any():
+        for idx, loc_norm in df.loc[external_key, "_loc_first"].map(norm).items():
+            display_name, lat, lon = EXTERNAL_LOCATION_POINTS[loc_norm]
+            df.at[idx, "geo_level"] = "external"
+            df.at[idx, "geo_source"] = "manual_external_alias"
+            df.at[idx, "geo_name_matched"] = display_name
+            df.at[idx, "geo_match_type"] = "manual_point"
+            df.at[idx, "geo_lat"] = float(lat)
+            df.at[idx, "geo_lon"] = float(lon)
+            df.at[idx, "geom_point_wkt"] = Point(float(lon), float(lat)).wkt
+            df.at[idx, "geom_poly_wkt"] = None
 
     cache = load_cache(cache_path)
     geolocator = Nominatim(user_agent=args.user_agent, timeout=args.timeout_seconds)

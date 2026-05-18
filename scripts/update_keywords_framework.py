@@ -31,8 +31,15 @@ def parse_semicolon_values(value: object) -> list[str]:
     return [part.strip() for part in str(value).split(";") if part.strip()]
 
 
+def read_csv_with_encoding_fallback(path: Path, **kwargs: object) -> pd.DataFrame:
+    try:
+        return pd.read_csv(path, **kwargs)
+    except UnicodeDecodeError:
+        return pd.read_csv(path, encoding="cp1252", **kwargs)
+
+
 def load_keyword_table(path: Path) -> tuple[list[str], dict[str, list[str]]]:
-    df = pd.read_csv(path)
+    df = read_csv_with_encoding_fallback(path)
     df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
 
     category_order: list[str] = []
@@ -78,7 +85,7 @@ def main() -> None:
     audit_rows: list[dict[str, object]] = []
 
     if review_csv.exists():
-        reviews = pd.read_csv(review_csv)
+        reviews = read_csv_with_encoding_fallback(review_csv)
         for row in reviews.to_dict(orient="records"):
             if not parse_bool(row.get("include_in_vocab")):
                 continue

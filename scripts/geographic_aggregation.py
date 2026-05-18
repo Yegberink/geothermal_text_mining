@@ -1,10 +1,17 @@
 import argparse
 import os
+import re
+import unicodedata
 from pathlib import Path
 
 import geopandas as gpd
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+
+LOCATION_PROVINCE_OVERRIDES = {
+    "den helder": "Noord-Holland",
+    "waddenzee": "Fryslân",
+}
 
 
 def pick_col_by_regex(cols, patterns):
@@ -16,6 +23,54 @@ def pick_col_by_regex(cols, patterns):
             if re.search(pat, cl):
                 return c
     return None
+
+
+def norm(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.replace("-", " ").replace("_", " ")
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^\w\s\.'()]", "", text)
+    return text.strip()
+
+
+def apply_location_province_overrides(
+    text_gdf: gpd.GeoDataFrame,
+    prov_gdf: gpd.GeoDataFrame,
+    prov_name_col: str,
+    prov_code_col: str | None = None,
+) -> gpd.GeoDataFrame:
+    text_gdf = text_gdf.copy()
+    location_cols = [c for c in ["_loc_norm", "_loc_first", "llm_location", "geo_name_matched"] if c in text_gdf.columns]
+    if not location_cols:
+        return text_gdf
+
+    lookup = {
+        norm(name): row
+        for _, row in prov_gdf.iterrows()
+        for name in [row.get(prov_name_col)]
+    }
+
+    combined = None
+    for col in location_cols:
+        col_norm = text_gdf[col].map(norm)
+        combined = col_norm if combined is None else combined + " | " + col_norm
+
+    for loc_norm, province_name in LOCATION_PROVINCE_OVERRIDES.items():
+        province_row = lookup.get(norm(province_name))
+        if province_row is None:
+            continue
+
+        mask = combined.str.contains(rf"(?:^|\| )?{re.escape(loc_norm)}(?:$| \|)", regex=True, na=False)
+        if not mask.any():
+            continue
+
+        text_gdf.loc[mask, "province_name"] = province_row[prov_name_col]
+        if prov_code_col is not None and "province_code" in text_gdf.columns:
+            text_gdf.loc[mask, "province_code"] = province_row[prov_code_col]
+
+    return text_gdf
 
 
 def parse_args():
@@ -115,6 +170,12 @@ def main():
         code_col=prov_code_col,
         out_code_col="province_code",
         eligible_mask=non_country,
+    )
+    text_gdf = apply_location_province_overrides(
+        text_gdf=text_gdf,
+        prov_gdf=prov,
+        prov_name_col=prov_name_col,
+        prov_code_col=prov_code_col,
     )
     print("Added province columns")
 

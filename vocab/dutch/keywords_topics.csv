@@ -1,79 +1,83 @@
-Technological readiness,Comparing locations,Risks,Support,Governance,Knowledge availability,Sustainability,Costs
-pilotproject,referentieproject,risico,draagvlak,vergunning,geologische data,duurzame energie,kosten
-pilot,pilotgemeente,veiligheidsrisico,publieke acceptatie,vergunningstraject,ondergronddata,hernieuwbare energie,investering
-pilotfase,referentie-installatie,seismisch risico,steun,regelgeving,bodemdata,CO2-reductie,kapitaalinvestering
-demonstratie-installatie,praktijkvoorbeeld,aardbeving,lokale steun,beleid,geologisch onderzoek,emissiereductie,exploitatiekosten
-demoproject,casestudy,bevingen,bezorgdheid,besluitvorming,seismisch onderzoek,klimaatneutraliteit,projectfinanciering
-prototype,internationale casestudy,trillingen,protest,milieueffectrapportage,ondergrondmodel,fossiele uitfasering,subsidie
-prototype-installatie,buitenlandse projecten,seismische activiteit,weerstand,bestemmingsplan,geofysische data,schone energie,budget
-exploratieboring,buitenlandse ervaring,geïnduceerde seismiciteit,wantrouwen,vergunningaanvraag,bodemkarakterisatie,groene energie,kostenraming
-testboring,benchmark,schade aan gebouwen,scepsis,overheidsbesluit,kernmonsters,duurzame warmte,businesscase
-testfase,prestatiebenchmark,scheurvorming,vertrouwen,participatieprocedure,meetgegevens,CO2-neutraal,kosten-batenanalyse
-proeffase,prestatievergelijking,verzakkingen,projectacceptatie,juridische toetsing,ondergrondse kaarten,emissievrij,terugverdientijd
-proof-of-concept,voorbeeldregio,bodemdaling,lokale betrokkenheid,beleidskader,reservoiranalyse,klimaatvriendelijk,financieel
-conceptvalidatie,referentieregio,boringsrisico,sociale acceptatie,procedure,geologische onzekerheid,milieuwinst,rendement
-praktijkvalidatie,vergelijkbare regio,droge put,bewonerssteun,inspraakprocedure,datagap ondergrond,decarbonisatie,financiering
-veldtest,projectbenchmark,temperatuur onzekerheid,projectsteun,goedkeuring,ondergrondverkenning,klimaatdoelen,operationele kosten
-praktijktest,referentiecase,onzekerheid,publieke betrokkenheid,regelgevingskader,seismische data,hernieuwbare warmte,projectkosten
-technologietest,projectervaring,mislukte boring,onzekerheid in de buurt,projectautorisatie,geologische interpretatie,ecologische winst,budgetoverschrijding
-systeemtest,internationale ervaring,tegenvallende opbrengst,lokale zorgen,toetsingsprocedure,ondergrondonderzoek,schone warmte,kostenoverschrijding
-experimentele toepassing,projectbenchmarking,storing,onrust,proceslengte,geofysisch onderzoek,duurzame bron,rendabiliteit
-experiment,referentiegebied,incident,controverse,besluit,reservoirdata,continu energie,financiële haalbaarheid
-experimenteel,projectvergelijking,probleem,bezorgdheid bewoners,planvorming,geologische kennis,altijd beschikbaar,projectbudget
-innovatieproject,praktijkcase,technisch risico,lokale discussie,besluitvormingsfase,ondergrondparameters,voorzieningszekerheid,investeringskosten
-innovatieprogramma,referentiecasus,projectrisico,protestactie,beleidsafstemming,geofysische dataset,hernieuwbare bron,exploitatiebudget
-proeftuin,benchmarkproject,projectresultaten,actiegroep,projectprocedure,geologische analyse,duurzame warmtebron,bedrijfskosten
-living lab,prestatiecase,mislukking,bewonersprotest,vergunningsprocedure,bodemkarakterisatie onderzoek,groene warmte,kapitaalkosten
-testopstelling,vergelijkingsproject,risicozone,publiek debat,bestemmingsplanwijziging,reservoirmodellering,CO2-vrije energie,operationeel budget
-concepttest,referentie-installaties,bevingsgevaar,lokale weerstand,projectbesluit,temperatuurinschatting,klimaatbestendig,projectinvestering
-ontwikkelfase,succesproject,magnitude,maatschappelijke weerstand,overheidsbeleid,debietanalyse,schone energiebron,financieringskosten
-ontwikkeltraject,projectbenchmarkresultaat,seismische metingen,scepsis bewoners,beleidsbesluit,hydraulische test,duurzame energiebron,exploitatie-investering
-ontwikkelstadium,projectbenchmarkdata,seismisch meetnet,bewonerszorg,regelgeving energie,reservoirkarakterisatie,emissievrije energie,kapitaalbehoefte
-praktijkervaring,referentievoorbeeld,naschokken,zorgen bewoners,vergunningverlening,boorresultaat,groene energiebron,projectrendement
-operationele ervaring,internationaal voorbeeld,aardschok,maatschappelijke discussie,projectprocedurekosten,slagingspercentage,klimaatoplossing,kostenstructuur
-opschaling,projectvergelijking internationaal,seismische trillingen,,beleidsproces,bronrendement,hernieuwbare warmtebron,kostenanalyse
-schaalvergroting,praktijkresultaten buitenland,breuklijnactiviteit,,overheidsgoedkeuring,reservoirdruk,schone warmtevoorziening,financiële planning
-technologieontwikkeling,projectcase buitenland,grondversnelling,,milieubeoordeling,doorlatendheid,duurzame warmtevoorziening,projectkostenanalyse
-technologische test,referentiecase buitenland,seismogram,,milieutoets,warmteflux,CO2-arme energie,projectbegroting
-systeemontwikkeling,benchmarkstudie,bevingscluster,,milieueffectbeoordeling,geothermische gradient,klimaatneutrale energie,projectfinanciën
-projectontwikkeling,projectbenchmarkstudie,ondergrondse spanning,,vergunningseis,natuurlijke warmtereserves,groene energietransitie,kostenplanning
-innovatieproces,projectevaluatie buitenland,tectonische breuk,,regelgevingsproces,reservoirstabiliteit,duurzame energievoorziening,financieringsstructuur
-techniekontwikkeling,projectervaring buitenland,aardbevingsrisico,,overheidsprocedure,formatiewater,schone energietransitie,financieringsmodel
-pilotinstallatie,internationale benchmark,schadebevingen,,overheidsbesluitvorming,reservoirdynamiek,CO2-neutrale warmte,projectbudgetanalyse
-demoversie,projectbenchmark internationaal,aardschokregistratie,,projectgoedkeuring,warmtefluxmeting,klimaatvriendelijke energie,projectkostenraming
-technologieproef,projectvergelijking Europa,bevingsintensiteit,,regelgevingsbesluit,geothermische data,groene warmtevoorziening,financiële analyse
-praktijkimplementatie,IJsland,bevingsmetingen,,regelgeving geothermie,reservoiranalyse data,duurzame warmteoplossing,projectfinancieringsmodel
-praktijktestinstallatie,Hellisheidi,aardbevingsmonitoring,,regelgeving warmte,ondergrondse permeabiliteit,hernieuwbare warmtevoorziening,investeringsstrategie
-proefinstallatie,Italië,seismisch monitoringsnet,,vergunning warmteproject,geologische warmtevoorraad,schone warmtebron,projectinvesteringen
-testinstallatie,Lardello,seismische monitoring,,vergunningproces,thermisch reservoir,duurzame warmteproductie,projectkostenplanning
-experimenteergebied,Zwitserland,seismische activiteit meten,,bestuurlijk besluit,permanente warmtestroom,klimaatneutrale warmte,kostenberekening
-transitieproeftuin,St. Gallen,bevingsanalyse,,beleidskader energie,aquiferformatie,duurzame energie-infrastructuur,kostenanalyse project
-,Zuid-Korea,seismisch risicoanalyse,,regelgeving energieproject,hydrothermaal systeem,schone warmte-infrastructuur,financiële projectanalyse
-,Pohang,seismische risicoanalyse,,overheidsvergunning,ondergrondse permeabiliteit meting,,projectfinanciering structuur
-,Duitsland,aardbevingsgevoelig,,vergunning energieproject,projectgeologie,,investeringsstructuur
-,Meaningen,inklinking,,regelgeving energie-infrastructuur,kennis,,projectkostenstructuur
-,Thüringen,inklinken,,vergunning infrastructuur,,,goedkoop
-,Staufen im Breisgau,richter,,burgerparticipatie,,,goedkoper
-,Boxtel,,,participatieproces,,,duur
-,Barendrecht,,,informatieavond,,,duurder
-,,,,inspraak,,,rendabel
-,,,,communicatie met bewoners,,,
-,,,,maatschappelijk debat,,,
-,,,,bewonersparticipatie,,,
-,,,,debat,,,
-,,,,participatie bewoners,,,
-,,,,informatieavond bewoners,,,
-,,,,bewonersoverleg,,,
-,,,,lokale bijeenkomst,,,
-,,,,dialoog met bewoners,,,
-,,,,openbare bijeenkomst,,,
-,,,,publieke bijeenkomst,,,
-,,,,participatieavond,,,
-,,,,lokale inspraak,,,
-,,,,open debat,,,
-,,,,lokale consultatie,,,
-,,,,participatiebijeenkomst,,,
-,,,,bewonersdialoog,,,
-,,,,lokale informatieavond,,,
-,,,,bestemmingsplannen,,,
-,,,,bestemmingsplan,,,
+Costs,Sustainability,Permitting & policy,Public acceptance,Technological uncertainty,Infrastructure,Environmental or geological hazards,,
+bedrijfskosten,altijd beschikbaar,Beleid,acceptatie,benchmark,distributienet,aardbeving,,
+begroting,CO2 neutraal,beleidsbesluit,actiegroep,benchmarkproject,distributienetten,aardbevingen,,
+begrotingen,CO2 neutrale,beleidskader,arbeidsplaatsen,bodemdata,distributienetwerk,aardbevingsgevaar,,
+budget,CO2 neutraliteit,beleidskaders,banen,boorresultaat,Electriciteitsnet,aardbevingsrisico,,
+budgetten,CO2 reductie,Beleidsproces,bewonersprotest,boorresultaten,Electriciteitsnetten,aardbevingsrisico's,,
+businesscase,CO2 vrij,beleidsvoornemen,bewonerssteun,bronmodel,energienet,aardschok,,
+dure,CO2 vrije,beleidsvoornemens,bezorgdheid,casestudies,energienetten,aardschokken,,
+duur,CO2-neutraal,besluit,bouwgeluid,casestudy,energienetwerk,beving,,
+duurder,CO2-neutraliteit,besluitvorming,buurtprotest,corrosief,hoogspanningskabel,bevingen,,
+duurst,CO2-reductie,bestemmingsplan,buurtprotesten,debiet,hoogspanningskabels,bevingsgevaar,,
+exploitatiekosten,CO2-vrij,bestemmingsplannen,collectieve waarden,demoproject,hoogspanningsnet,bodemdaling,,
+Financieel,CO2-vrije,betrokkenheid,comfort,demoprojecten,hoogspanningsnetten,incidenten,,
+financi�le,continue electriciteit,bewonersavond,comfortbeleving,doorlatendheid,Hoogspanningsnetwerk,bodemverzakking,,
+financi�n,continue energie,bewonersavonden,controverse,experiment,infrastructuur,bodemverzakkingen,,
+financiering,continue energiebron,bewonersoverleg,Draagvlak,experimenteel,leidingnetwerk,breuklijn,,
+financieringskosten,continue energiebronnen,bewonersparticipatie,geluidsbelasting,experimentele ,netbeheer,breuklijnen,,
+goedkoop,continue warmte,bijeenkomst,geluidsoverlast,experimenten,netbeheerder,grondwaterverontreiniging,,
+goedkoopst,decarbonisatie,bijeenkomsten,gewoonte,exploratieboring,netcongestie,grondwatervervuiling,,
+goedkope,Duurzaam,burgerparticipatie,gewoontes,exploratieboringen,nutsvoorziening,incident,,
+goedkoper,Duurzaamste,debat,hinder,Geologisch onderzoek,nutsvoorzieningen,inklinking,,
+inkomsten,Duurzame,debatten,identiteit,geologische analyse,pijpleiding,lekkage,,
+Investering,Duurzamer,goedkeuring,kachel,geologische analyses,pijpleidingen,lekkages,,
+investeringen,emissie,informatieavond,klacht,Geologische data,Stadsverwarming,magnitude,,
+investeringskosten,emissiereductie,inspraak,klachten,,stadswarmte,milieuvervuiling,,
+investeringsstrategie,emissievrij,inspraakprocedure,klachtencommissie,Geologische onderzoeken,stroomkabel,naschokken,,
+investeringsstrategi�n,emissievrije,juridisch,koken,geologische onzekerheden,stroomkabels,oppervlaktewaterverontreiniging,,
+kapitaalinvestering,energietransitie,juridische,leefstijl,geologische onzekerheid,warmteleiding,oppervlaktewatervervuiling,,
+kapitaalinvesteringen,groene elektriciteit,maatschappelijke discussie,leefstijlen,geothermische gradient,warmteleidingen,richter,,
+kapitaalkosten,groene energie,mer,lichthinder,kennis,warmtenet,schadelijke stoffen,,
+Kosten,groene energiebron,milieueffectbeoordeling,lichtoverlast,meetgegevens,warmtenetten,scheurvorming,,
+kostenanalyse,groene energiebronnen,milieueffectbeoordelingen,lokale economie,Metingen,warmtenetwerk,seismiciteit,,
+kostenanalyses,groene technologie,Milieueffectrapportage,luidruchtig,mineraalrijk,warmtewisselaar,seismisch risico,,
+kostenraming,groene warmte,Milieueffectrapportages,luidruchtige,mislukte boring,warmtewisselaars,seismische activiteit,,
+kostenramingen,groene warmtevoorziening,milieutoets,onrust,ondergronddata,,seismische risico's,,
+projectinvestering,Hernieuwbaar,milieutoetsen,overlast,ondergrondonderzoek,,trillingsgevaar,,
+projectinvesteringen,Hernieuwbare ,opsporingsvergunning,stinken,Ondergrondsmodel,,trilling,,
+rendabel,klimaatbestendig,opsporingsvergunningen,,ontwikkelingsfase,,trillingen,,
+rendabele,klimaatdoel,overheidsbeleid,protest,opschaling,,veiligheid,,
+rendabiliteit,Klimaatdoelen,overheidsbesluit,protestactie,pilot,,veiligheidsrisico,,
+rendement,Klimaatneutraal,participatie,protestacties,pilotfase,,verontreiniging,,
+Subsidie,klimaatneutrale,participatieavond,protesten,pilotproject,,vervuiling,,
+subsidies,Klimaatneutraliteit,participatieavonden,protesteren,proefboring,,verzakking,,
+terugverdientijd,Klimaatvriendelijk,participatieproces,scepsis,proefboringen,,verzakkingen,,
+Winst,klimaatvriendelijke,planvorming,skeptisch,proefinstallatie,,waterverontreiniging,,
+winsten,milieuwinst,procedure,skeptische ,proefinstallaties,,watervervuiling,,
+,schone elektriciteit,procedures,solidariteit,proeftuin,,naschok,,
+,Schone energie,regelgeving,stank,projectbenchmark,,schadelijke stof,,
+,milieuwinsten,samenspraak,steun,prototype,,gevaarlijke stof,,
+,schone energiebron,startvergunning,stofhinder,referentie casus,,gevaarlijke stoffen,,
+,schone energiebronnen,Vergunning,stookgedrag,Meting,,drinkwater,,
+,schone warmte,vergunningaanvraag,traditie,referentiecase,,drinkwaterverontreiniging,,
+,schone warmtevoorziening,vergunningaanvragen,tradities,referentiecases,,drinkwatervervuiling,,
+,voorzieningszekerheid,vergunningen,verkeersbelasting,Reservoir analyse,,,,
+,CO2-neutrale,vergunningseis,Vertrouwen,reservoirdata,,,,
+,continue warmtevoorziening,vergunningsprocedure,verwarmingsvoorkeur,reservoirdruk,,,,
+,klimaat,vergunningsprocedures,wantrouwen,reservoirmodel,,,,
+,,vergunningstraject,Weerstand,scaling,,,,
+,,vergunningstrajecten,werkgelegenheid,SCAN,,,,
+,,vergunnningverlening,zorgen,Schaalbaarheid,,,,
+,,wet,actiegroepen,Seismisch onderzoek,,,,
+,,wettelijk kader,bewonersprotesten,Seismische Campagne Aardwarmte Nederland,,,,
+,,wetten,controversen,seismische data,,,,
+,,Beleidsprocessen,bouwgeluiden,Seismische onderzoeken,,,,
+,,participatieprocessen,kachels,slagingspercentage,,,,
+,,inspraakprocedures,collectieve waarde,temperatuur onzekerheid,,,,
+,,informatieavonden,,temperatuurinschatting,,,,
+,,maatschappelijke discussies,,testboring,,,,
+,,startvergunningen,,testboringen,,,,
+,,vergunningseisen,,testfase,,,,
+,,,,testopstelling,,,,
+,,,,trillingsvrachtwagen,,,,
+,,,,trillingsvrachtwagens,,,,
+,,,,vergelijkbare regio,,,,
+,,,,warmteflux,,,,
+,,,,warmtevermogen,,,,
+,,,,waterproductie,,,,
+,,,,bronmodellen,,,,
+,,,,corrosieve,,,,
+,,,,vergelijkbare regio's,,,,
+,,,,reservoir analyses,,,,
+,,,,prototypes,,,,
+,,,,testopstellingen,,,,

@@ -23,6 +23,11 @@ SENTIMENT_COLORS = {
     "positive": "#009E73",
 }
 MIN_PROVINCE_SENTENCES = 31
+LOCATION_PROVINCE_OVERRIDES = {
+    "den helder": "Noord-Holland",
+    "waddenzee": "Fryslân",
+}
+NETHERLANDS_LOCATION_NAMES = {"nederland", "netherlands"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,6 +88,44 @@ def slugify(value: str) -> str:
     return slug.strip("_") or "frame"
 
 
+def normalize_location_value(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[-_]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def apply_province_overrides(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "province_name" not in df.columns:
+        return df
+
+    location_cols = [c for c in ["_loc_norm", "_loc_first", "llm_location", "geo_name_matched"] if c in df.columns]
+    if not location_cols:
+        return df
+
+    combined = pd.Series("", index=df.index, dtype=object)
+    for col in location_cols:
+        combined = combined + " | " + df[col].map(normalize_location_value)
+
+    for loc_norm, province_name in LOCATION_PROVINCE_OVERRIDES.items():
+        mask = combined.str.contains(rf"(?:^| \| ){re.escape(loc_norm)}(?:$| \| )", regex=True, na=False)
+        df.loc[mask, "province_name"] = province_name
+
+    return df
+
+
+def is_netherlands_location(df: pd.DataFrame) -> pd.Series:
+    location_cols = [c for c in ["_loc_norm", "_loc_first", "llm_location", "geo_name_matched"] if c in df.columns]
+    if not location_cols:
+        return pd.Series(False, index=df.index)
+
+    mask = pd.Series(False, index=df.index)
+    for col in location_cols:
+        mask = mask | df[col].map(normalize_location_value).isin(NETHERLANDS_LOCATION_NAMES)
+    return mask
+
+
 def load_frame_keyword_vocab(path: Path) -> tuple[list[str], dict[str, set[str]], dict[str, dict[str, str]]]:
     vocab_df = pd.read_csv(path)
     vocab_df = vocab_df.loc[:, ~vocab_df.columns.astype(str).str.match(r"^Unnamed")]
@@ -121,6 +164,31 @@ def build_province_summary(admin_df: pd.DataFrame) -> pd.DataFrame:
 
     df["_sent"] = normalize_sentiment(df[sentiment_source_col])
     df = df[df["_sent"].isin(SENTIMENT_ORDER)].copy()
+    df = apply_province_overrides(df)
+
+    has_province = df["province_name"].notna() & df["province_name"].astype(str).str.strip().ne("")
+    include_in_overall = has_province | (~has_province & is_netherlands_location(df))
+    overall_counts = df.loc[include_in_overall, "_sent"].value_counts().reindex(SENTIMENT_ORDER, fill_value=0)
+    overall_total = int(overall_counts.sum())
+    overall = pd.DataFrame(
+        [{
+            "province_name": "All sentences",
+            "n_neg": int(overall_counts["negative"]),
+            "n_neu": int(overall_counts["neutral"]),
+            "n_pos": int(overall_counts["positive"]),
+            "n_text_units": overall_total,
+            "pct_neg": 100 * overall_counts["negative"] / overall_total if overall_total else pd.NA,
+            "pct_neu": 100 * overall_counts["neutral"] / overall_total if overall_total else pd.NA,
+            "pct_pos": 100 * overall_counts["positive"] / overall_total if overall_total else pd.NA,
+            "polarity_balance": (
+                100 * overall_counts["positive"] / overall_total
+                - 100 * overall_counts["negative"] / overall_total
+                if overall_total
+                else pd.NA
+            ),
+        }]
+    )
+
     df = df.dropna(subset=["province_name"])
     df = df[df["province_name"].astype(str).str.strip().ne("")]
 
@@ -141,39 +209,27 @@ def build_province_summary(admin_df: pd.DataFrame) -> pd.DataFrame:
     grouped["polarity_balance"] = grouped["pct_pos"] - grouped["pct_neg"]
     grouped = grouped[grouped["n_text_units"] >= MIN_PROVINCE_SENTENCES].copy()
     grouped = grouped.sort_values(["n_text_units", "province_name"], ascending=[False, True]).reset_index(drop=True)
-    return grouped
+    return pd.concat([overall, grouped], ignore_index=True)
 
 
 def plot_province_sentiment_balance(province_tbl: pd.DataFrame, out_path: Path) -> None:
     df = province_tbl.copy()
-    if not df.empty:
-        total_neg = df["n_neg"].sum()
-        total_neu = df["n_neu"].sum()
-        total_pos = df["n_pos"].sum()
-        total_n = total_neg + total_neu + total_pos
-        if total_n > 0:
-            overall = pd.DataFrame(
-                [{
-                    "province_name": "All sentences",
-                    "n_neg": total_neg,
-                    "n_neu": total_neu,
-                    "n_pos": total_pos,
-                    "n_text_units": total_n,
-                    "pct_neg": 100 * total_neg / total_n,
-                    "pct_neu": 100 * total_neu / total_n,
-                    "pct_pos": 100 * total_pos / total_n,
-                    "polarity_balance": 100 * total_pos / total_n - 100 * total_neg / total_n,
-                }]
-            )
-            df = pd.concat([overall, df], ignore_index=True)
     df = df.sort_values("polarity_balance")
+    df["province_label"] = df.apply(
+        lambda row: f"{row['province_name']} (n={int(row['n_text_units'])})",
+        axis=1,
+    )
     configure_plot_style()
 
-    fig, ax = plt.subplots(figsize=(8, 6), dpi=200)
-    ax.set_xlim(-60, 60)
+    fig, ax = plt.subplots(figsize=(8.4, 6.6), dpi=200)
+    x_limit = max(
+        60,
+        float(df[["pct_neg", "pct_pos", "polarity_balance"]].abs().max().max()) + 8,
+    )
+    ax.set_xlim(-x_limit, x_limit)
 
     ax.barh(
-        df["province_name"],
+        df["province_label"],
         -df["pct_neg"],
         label="Negative",
         color=SENTIMENT_COLORS["negative"],
@@ -181,17 +237,28 @@ def plot_province_sentiment_balance(province_tbl: pd.DataFrame, out_path: Path) 
         linewidth=0.7,
     )
     ax.barh(
-        df["province_name"],
+        df["province_label"],
         df["pct_pos"],
         label="Positive",
         color=SENTIMENT_COLORS["positive"],
         edgecolor="white",
         linewidth=0.7,
     )
+    ax.scatter(
+        df["polarity_balance"],
+        df["province_label"],
+        marker="D",
+        s=28,
+        color="#1f1f1f",
+        edgecolor="white",
+        linewidth=0.5,
+        zorder=4,
+        label="Balance",
+    )
 
     ax.axvline(0, color="black", linewidth=0.8)
-    ax.set_xlabel("Percentage of sentences")
-    ax.set_title("Sentiment per province")
+    ax.set_xlabel("Percentage of sentences; diamond = positive - negative")
+    ax.set_title("Sentiment per province", pad=36)
 
     for spine in ax.spines.values():
         spine.set_visible(True)
@@ -199,27 +266,17 @@ def plot_province_sentiment_balance(province_tbl: pd.DataFrame, out_path: Path) 
         spine.set_color("black")
 
     ax.grid(False)
-    ax.legend(frameon=False)
+    ax.legend(frameon=False, ncol=3, loc="lower center", bbox_to_anchor=(0.5, 1.01))
 
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0, 1, 0.96))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, bbox_inches="tight")
+    plt.savefig(out_path, bbox_inches="tight", pad_inches=0.12)
     plt.close(fig)
 
 
 def plot_province_stacked_distribution(province_tbl: pd.DataFrame, out_path: Path) -> None:
     df = province_tbl.copy().dropna(subset=["province_name"])
-    plot_df = (
-        df.groupby("province_name", as_index=True)[["n_neg", "n_neu", "n_pos"]]
-        .sum()
-        .sort_values(["n_neg", "n_neu", "n_pos"], ascending=False)
-    )
-    if not plot_df.empty:
-        plot_df.loc["All sentences"] = {
-            "n_neg": plot_df["n_neg"].sum(),
-            "n_neu": plot_df["n_neu"].sum(),
-            "n_pos": plot_df["n_pos"].sum(),
-        }
+    plot_df = df.set_index("province_name")[["n_neg", "n_neu", "n_pos"]].copy()
     plot_df["total"] = plot_df["n_neg"] + plot_df["n_neu"] + plot_df["n_pos"]
     denom = plot_df["total"].replace({0: pd.NA})
 
@@ -233,7 +290,7 @@ def plot_province_stacked_distribution(province_tbl: pd.DataFrame, out_path: Pat
         plot_df = plot_df.loc[ordered_index]
 
     configure_plot_style()
-    fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
+    fig, ax = plt.subplots(figsize=(10.5, 6.4), dpi=300)
     bottom = pd.Series(0, index=plot_data.index, dtype=float)
 
     for sentiment in SENTIMENT_ORDER:
@@ -265,21 +322,23 @@ def plot_province_stacked_distribution(province_tbl: pd.DataFrame, out_path: Pat
                 fontsize=9,
                 color="#3a3a3a",
                 rotation=90,
+                clip_on=False,
             )
 
-    ax.set_ylim(0, 108)
+    ax.set_ylim(0, 100)
     plt.xticks(rotation=45, ha="right")
-    ax.legend(
+    fig.legend(
+        *ax.get_legend_handles_labels(),
         title="Sentiment",
         frameon=False,
         ncol=3,
         loc="upper center",
-        bbox_to_anchor=(0.5, 1.12),
+        bbox_to_anchor=(0.5, 0.98),
     )
 
-    plt.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.9))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, bbox_inches="tight")
+    plt.savefig(out_path, bbox_inches="tight", pad_inches=0.12)
     plt.close(fig)
 
 
@@ -320,7 +379,7 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
     plot_data = plot_data.loc[[all_label] + [idx for idx in plot_data.index if idx != all_label]]
 
     configure_plot_style()
-    fig, ax = plt.subplots(figsize=(9.5, 6), dpi=300)
+    fig, ax = plt.subplots(figsize=(10, 6.4), dpi=300)
     bottom = pd.Series(0, index=plot_data.index, dtype=float)
 
     for sentiment in SENTIMENT_ORDER:
@@ -345,17 +404,18 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
     ax.set_axisbelow(True)
     plt.xticks(rotation=45, ha="right")
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0f}%"))
-    ax.legend(
+    fig.legend(
+        *ax.get_legend_handles_labels(),
         title="Sentiment",
         frameon=False,
         ncol=3,
         loc="upper center",
-        bbox_to_anchor=(0.5, 1.12),
+        bbox_to_anchor=(0.5, 0.98),
     )
 
-    plt.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.9))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, bbox_inches="tight")
+    plt.savefig(out_path, bbox_inches="tight", pad_inches=0.12)
     plt.close(fig)
 
 
@@ -664,22 +724,32 @@ def plot_locations_interactive(
         )
     )
 
-    xmin, ymin, xmax, ymax = provinces.total_bounds
-    xpad = (xmax - xmin) * 0.04
-    ypad = (ymax - ymin) * 0.04
+    prov_xmin, prov_ymin, prov_xmax, prov_ymax = provinces.total_bounds
+    xmin = min(prov_xmin, float(points_df["lon"].min()))
+    xmax = max(prov_xmax, float(points_df["lon"].max()))
+    ymin = min(prov_ymin, float(points_df["lat"].min()))
+    ymax = max(prov_ymax, float(points_df["lat"].max()))
+    xpad = max((xmax - xmin) * 0.08, 0.5)
+    ypad = max((ymax - ymin) * 0.08, 0.5)
 
     fig.update_geos(
         fitbounds=False,
-        showcountries=False,
-        showcoastlines=False,
-        showland=False,
-        showocean=False,
+        showcountries=True,
+        countrycolor="#b9b9b9",
+        countrywidth=0.7,
+        showcoastlines=True,
+        coastlinecolor="#9f9f9f",
+        coastlinewidth=0.7,
+        showland=True,
+        landcolor="#f7f2ea",
+        showocean=True,
+        oceancolor="#dbeaf2",
         showlakes=False,
         showrivers=False,
         bgcolor="#f6f1e8",
         lonaxis_range=[xmin - xpad, xmax + xpad],
         lataxis_range=[ymin - ypad, ymax + ypad],
-        projection_type="mercator",
+        projection_type="natural earth",
     )
     fig.update_layout(
         title="Interactive matched locations",

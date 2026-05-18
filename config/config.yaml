@@ -119,6 +119,11 @@ paths:
   sentences_with_categories_admin_gpkg: output/text/sentences_with_categories_admin.gpkg
   sentences_with_categories_admin_csv: output/text/sentences_with_categories_admin.csv
   figures_dir: output/figures
+  articles_per_year_csv: output/figures/articles_per_year.csv
+  articles_per_year_png: output/figures/articles_per_year.png
+  top_newspapers_csv: output/figures/top_newspapers.csv
+  top_newspapers_png: output/figures/top_newspapers.png
+  article_descriptives_summary_csv: output/figures/article_descriptives_summary.csv
   frame_keywords_dir: output/figures/frame_keywords
   province_sentiment_table_csv: output/figures/province_sentiment_table.csv
   provinces_sentiment_balance_png: output/figures/provinces_sentiment_balance.png
