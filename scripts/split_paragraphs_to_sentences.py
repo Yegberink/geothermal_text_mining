@@ -111,6 +111,8 @@ def main() -> None:
     out = pd.DataFrame(rows)
     out.to_csv(output_csv, index=False, encoding="utf-8")
     print(f"Wrote: {output_csv} (rows={len(out)})")
+    print(f"[workflow_table] paragraphs_split_to_sentences: {len(df)}")
+    print(f"[workflow_table] sentences_after_split: {len(out)}")
 
 
 if __name__ == "__main__":

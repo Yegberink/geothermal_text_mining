@@ -324,7 +324,11 @@ def strip_extraction_artifacts(text: str) -> str:
     text = _ARTIFACT_RTF_STAR_RE.sub(" ", text)
     text = _ARTIFACT_BEKIJK_RE.sub(" ", text)
     text = _ARTIFACT_GRAPHIC_RE.sub(" ", text)
-    return _MULTI_SPACE_RE.sub(" ", text).strip()
+    lines = [_WHITESPACE_RE.sub(" ", line).strip() for line in text.split("\n")]
+    text = "\n".join(lines)
+    text = re.sub(r" *\n *", "\n", text)
+    text = _MULTI_NEWLINE_RE.sub("\n\n", text)
+    return text.strip()
 
 
 def looks_corrupt_article(row: pd.Series) -> bool:
@@ -457,11 +461,51 @@ def dewrap_hardwrap_lines(text: str) -> str:
 
 
 def split_paragraphs(text: str) -> List[str]:
-    text = dewrap_hardwrap_lines(text)
-    if not text:
+    raw_text = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not raw_text:
         return []
-    paras = [p.strip() for p in re.split(r"\n\s*\n+", text) if p and p.strip()]
+
+    non_empty_lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
+    line_word_counts = [len(line.split()) for line in non_empty_lines]
+    substantial_line_share = (
+        sum(count >= MIN_WORDS_PER_PARAGRAPH for count in line_word_counts) / len(line_word_counts)
+        if line_word_counts
+        else 0.0
+    )
+
+    if len(non_empty_lines) > 1 and substantial_line_share >= 0.5:
+        paras = merge_single_line_paragraphs(raw_text)
+    elif re.search(r"\n\s*\n+", raw_text):
+        text = dewrap_hardwrap_lines(raw_text)
+        paras = [p.strip() for p in re.split(r"\n\s*\n+", text) if p and p.strip()]
+    else:
+        paras = merge_single_line_paragraphs(raw_text)
     return [p for p in paras if len(p.split()) >= MIN_WORDS_PER_PARAGRAPH]
+
+
+def merge_single_line_paragraphs(text: str) -> List[str]:
+    paras: List[str] = []
+    pending_heading = ""
+    for raw in text.split("\n"):
+        line = _WHITESPACE_RE.sub(" ", raw).strip()
+        if not line:
+            continue
+
+        if len(line.split()) < MIN_WORDS_PER_PARAGRAPH:
+            pending_heading = f"{pending_heading} {line}".strip()
+            continue
+
+        if pending_heading:
+            line = f"{pending_heading} {line}".strip()
+            pending_heading = ""
+        paras.append(line)
+
+    if pending_heading and paras:
+        paras[-1] = f"{paras[-1]} {pending_heading}".strip()
+    elif pending_heading:
+        paras.append(pending_heading)
+
+    return paras
 
 
 def make_paragraph_uid(
@@ -513,6 +557,7 @@ def main() -> None:
     # 1) Load raw articles
     df_raw = load_all_rtf_articles(input_rtf_dir, month_translations, weekday_names)
     print(f"[main] Loaded {len(df_raw)} raw article blocks")
+    print(f"[workflow_table] raw_article_blocks: {len(df_raw)}")
 
     if df_raw.empty:
         print("[main] No articles found. Check INPUT_RTF_DIR and that files end with .RTF")
@@ -525,6 +570,7 @@ def main() -> None:
     # 2) Clean
     df = clean_articles(df_raw, month_translations, weekday_names)
     print(f"[main] Articles after cleaning: {len(df)}")
+    print(f"[workflow_table] cleaned_articles: {len(df)}")
 
     # 3) Region mapping
     df = add_region_name(df, newspaper_region_csv)
@@ -556,6 +602,19 @@ def main() -> None:
 
     df_paras = pd.DataFrame(paragraph_rows)
     print(f"[main] Paragraph rows: {len(df_paras)}")
+    print(f"[workflow_table] paragraphs_after_split_filter: {len(df_paras)}")
+    if not df_paras.empty and "body_hash" in df_paras.columns:
+        paragraphs_per_article = df_paras.groupby("body_hash").size()
+        articles_with_multiple_paragraphs = int((paragraphs_per_article > 1).sum())
+        print(
+            "[main] Paragraphs per article: "
+            f"mean={paragraphs_per_article.mean():.2f}, "
+            f"max={int(paragraphs_per_article.max())}, "
+            f"multi_paragraph_articles={articles_with_multiple_paragraphs}/{len(paragraphs_per_article)}"
+        )
+        print(f"[workflow_table] articles_with_paragraphs: {len(paragraphs_per_article)}")
+        print(f"[workflow_table] articles_with_multiple_paragraphs: {articles_with_multiple_paragraphs}")
+        print(f"[workflow_table] mean_paragraphs_per_article: {paragraphs_per_article.mean():.2f}")
 
     if df_paras.empty:
         print(

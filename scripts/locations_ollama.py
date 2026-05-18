@@ -317,7 +317,10 @@ def main():
     df = df.set_index("uid", drop=True)
 
     df["word_count"] = df[args.text_col].apply(lambda x: len(str(x).split()))
+    input_rows = len(df)
     df = df[(df["word_count"] >= 20) & (df["word_count"] < 500)].copy()
+    print(f"[workflow_table] paragraphs_before_location_length_filter: {input_rows}")
+    print(f"[workflow_table] paragraphs_after_location_length_filter: {len(df)}")
 
     checkpoint_path = Path(args.checkpoint)
     cache_path = Path(args.cache)
@@ -346,6 +349,11 @@ def main():
 
     out.to_csv(args.out_csv, index=False, encoding="utf-8")
     print(f"Wrote: {args.out_csv}  (rows={len(out)})")
+    if "llm_location" in out.columns:
+        located = out["llm_location"].fillna("").astype(str).str.strip().str.upper().ne("NONE")
+        print(f"[workflow_table] paragraphs_sent_to_location_extraction: {len(out)}")
+        print(f"[workflow_table] paragraphs_with_extracted_location: {int(located.sum())}")
+        print(f"[workflow_table] paragraphs_without_extracted_location: {int((~located).sum())}")
 
 
 if __name__ == "__main__":

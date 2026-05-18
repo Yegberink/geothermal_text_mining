@@ -378,6 +378,10 @@ def main():
 
     print("\nWrote GeoPackage:", args.output_gpkg)
     print(f"Layers: {args.points_layer}, {args.polygons_layer}")
+    has_geo = df["geom_point_wkt"].notna() | df["geom_poly_wkt"].notna()
+    print(f"[workflow_table] paragraphs_after_offline_geocoding: {len(df)}")
+    print(f"[workflow_table] paragraphs_geocoded_offline: {int(has_geo.sum())}")
+    print(f"[workflow_table] paragraphs_not_geocoded_offline: {int((~has_geo).sum())}")
 
 
 if __name__ == "__main__":

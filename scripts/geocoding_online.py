@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--municipality-gpkg", type=str, default="data/dutch/admin_areas_municipalities_2025.gpkg")
     ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
     ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_geo.gpkg")
+    ap.add_argument("--output-csv", type=str, default="")
     ap.add_argument("--cache-path", type=str, default="cache/nominatim_cache.json")
     ap.add_argument("--country", type=str, default="Netherlands")
     ap.add_argument("--country-codes", type=str, default="")
@@ -189,6 +190,7 @@ def main() -> None:
     municipality_gpkg = Path(args.municipality_gpkg)
     province_gpkg = Path(args.province_gpkg)
     output_gpkg = Path(args.output_gpkg)
+    output_csv = Path(args.output_csv) if args.output_csv else None
     cache_path = Path(args.cache_path)
 
     muni_gdf = gpd.read_file(municipality_gpkg)
@@ -412,8 +414,16 @@ def main() -> None:
     print(diag)
 
     build_output_gpkg(df, output_gpkg, args.points_layer, args.polygons_layer)
+    if output_csv is not None:
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(output_csv, index=False, encoding="utf-8")
+        print("Wrote CSV:", output_csv)
     print("\nWrote GeoPackage:", output_gpkg)
     print(f"Layers: {args.points_layer}, {args.polygons_layer}")
+    has_geo = df["geom_point_wkt"].notna() | df["geom_poly_wkt"].notna()
+    print(f"[workflow_table] paragraphs_after_online_geocoding: {len(df)}")
+    print(f"[workflow_table] paragraphs_geocoded_final: {int(has_geo.sum())}")
+    print(f"[workflow_table] paragraphs_not_geocoded_final: {int((~has_geo).sum())}")
 
 
 if __name__ == "__main__":

@@ -309,7 +309,10 @@ def main():
     df = df.set_index("uid", drop=True)
 
     df["word_count"] = df[args.text_col].apply(lambda x: len(str(x).split()))
+    input_rows = len(df)
     df = df[(df["word_count"] >= 20) & (df["word_count"] < 500)].copy()
+    print(f"[workflow_table] paragraphs_before_geothermal_length_filter: {input_rows}")
+    print(f"[workflow_table] paragraphs_after_geothermal_length_filter: {len(df)}")
 
     checkpoint_path = Path(args.checkpoint)
     cache_path = Path(args.cache)
@@ -338,6 +341,13 @@ def main():
 
     out.to_csv(args.out_csv, index=False, encoding="utf-8")
     print(f"Wrote: {args.out_csv}  (rows={len(out)})")
+    if "llm_is_geothermal" in out.columns:
+        geothermal_yes = int(out["llm_is_geothermal"].astype(str).str.upper().eq("YES").sum())
+        geothermal_maybe = int(out["llm_is_geothermal"].astype(str).str.upper().eq("MAYBE").sum())
+        geothermal_no = int(out["llm_is_geothermal"].astype(str).str.upper().eq("NO").sum())
+        print(f"[workflow_table] paragraphs_classified_geothermal_yes: {geothermal_yes}")
+        print(f"[workflow_table] paragraphs_classified_geothermal_maybe: {geothermal_maybe}")
+        print(f"[workflow_table] paragraphs_classified_geothermal_no: {geothermal_no}")
 
 
 if __name__ == "__main__":

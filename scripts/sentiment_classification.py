@@ -419,6 +419,9 @@ def main() -> None:
     err_n = int((to_write.get("sentiment_status") == "error").sum()) if "sentiment_status" in to_write.columns else 0
     print(f"Wrote sentiment output: {output_csv}")
     print(f"Sentiment rows={len(to_write)}, ok={ok_n}, error={err_n}")
+    print(f"[workflow_table] sentences_sent_to_sentiment: {len(to_write)}")
+    print(f"[workflow_table] sentences_with_sentiment_ok: {ok_n}")
+    print(f"[workflow_table] sentences_with_sentiment_error: {err_n}")
 
 
 if __name__ == "__main__":

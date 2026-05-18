@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 import pandas as pd
+from shapely import wkt
 
 try:
     import geopandas as gpd
@@ -46,6 +47,40 @@ def hits_to_keywords_only_str(d):
     return ";".join(flat) if flat else None
 
 
+def _valid_wkt_value(value: object) -> bool:
+    text = str(value or "").strip()
+    return bool(text) and text.lower() not in {"nan", "none", "null", "<na>"}
+
+
+def attach_geometry_from_wkt(df: pd.DataFrame) -> tuple[pd.DataFrame, object, bool]:
+    if gpd is None:
+        raise ImportError("geopandas is required to write --output-gpkg from WKT columns.")
+    if "geom_poly_wkt" not in df.columns and "geom_point_wkt" not in df.columns:
+        return df, None, False
+
+    out = df.copy()
+    geometry_values = []
+    source_layers = []
+    for _, row in out.iterrows():
+        poly_wkt = row.get("geom_poly_wkt") if "geom_poly_wkt" in out.columns else None
+        point_wkt = row.get("geom_point_wkt") if "geom_point_wkt" in out.columns else None
+        if _valid_wkt_value(poly_wkt):
+            geometry_values.append(wkt.loads(str(poly_wkt)))
+            source_layers.append("polygons_wkt")
+        elif _valid_wkt_value(point_wkt):
+            geometry_values.append(wkt.loads(str(point_wkt)))
+            source_layers.append("points_wkt")
+        else:
+            geometry_values.append(None)
+            source_layers.append(None)
+
+    out["source_layer"] = out.get("source_layer", pd.Series([None] * len(out), index=out.index))
+    out["source_layer"] = out["source_layer"].where(out["source_layer"].notna(), source_layers)
+    has_geometry = any(geom is not None for geom in geometry_values)
+    gdf = gpd.GeoDataFrame(out, geometry=geometry_values, crs="EPSG:4326")
+    return gdf, gdf.crs, has_geometry
+
+
 def main():
     args = parse_args()
     project_dir = Path(args.project_dir).expanduser().resolve()
@@ -59,8 +94,11 @@ def main():
 
     if args.input_csv:
         text_gdf = pd.read_csv(args.input_csv)
-        crs = None
-        has_geometry = False
+        if args.output_gpkg:
+            text_gdf, crs, has_geometry = attach_geometry_from_wkt(text_gdf)
+        else:
+            crs = None
+            has_geometry = False
     elif args.input_gpkg:
         if gpd is None:
             raise ImportError("geopandas is required when using --input-gpkg.")
@@ -74,6 +112,9 @@ def main():
         has_geometry = True
     else:
         raise ValueError("Provide either --input-csv or --input-gpkg.")
+
+    input_rows = len(text_gdf)
+    workflow_stage = "sentence_categories" if args.output_gpkg else "sentence_frames"
 
     keyword_categories = pd.read_csv(args.keywords_csv)
     keyword_categories = keyword_categories.loc[
@@ -130,6 +171,7 @@ def main():
     text_gdf["matched_categories"] = res.apply(lambda x: x[0])
     text_gdf["matched_keywords"] = res.apply(lambda x: x[1])
     text_gdf["n_categories"] = text_gdf["matched_categories"].str.len()
+    matched_rows = int(text_gdf["n_categories"].fillna(0).astype(int).gt(0).sum())
     text_gdf["matched_categories_str"] = text_gdf["matched_categories"].apply(
         lambda lst: ";".join(lst) if lst else None
     )
@@ -174,6 +216,9 @@ def main():
     text_small.to_csv(output_short_csv, index=False)
 
     print(len(text_out), "unique text units processed and saved.")
+    print(f"[workflow_table] {workflow_stage}_input_rows: {input_rows}")
+    print(f"[workflow_table] {workflow_stage}_matched_rows: {matched_rows}")
+    print(f"[workflow_table] {workflow_stage}_output_rows: {len(text_out)}")
 
 
 if __name__ == "__main__":

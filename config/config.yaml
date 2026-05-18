@@ -103,15 +103,17 @@ paths:
 
   articles_csv: output/text/articles_cleaned.csv
   paragraphs_csv: output/text/newspapers_cleaned_paragraphs.csv
+  paragraph_keyword_filtered_csv: output/text/newspapers_keyword_filtered_paragraphs.csv
   paragraph_locations_csv: output/text/paragraph_locations_ollama.csv
   paragraph_geothermal_csv: output/text/paragraph_geothermal_ollama.csv
+  paragraphs_with_geo_offline_gpkg: output/text/paragraphs_with_geo_offline.gpkg
+  paragraph_offline_geocoding_csv: output/text/paragraph_offline_geocoding.csv
+  paragraphs_with_geo_gpkg: output/text/paragraphs_with_geo.gpkg
+  paragraphs_with_geo_csv: output/text/paragraphs_with_geo.csv
   sentence_locations_csv: output/text/sentence_locations_ollama.csv
   sentences_with_frames_long_csv: output/text/sentences_with_frames_long.csv
   sentences_with_frames_short_csv: output/text/sentences_with_frames_short.csv
   sentence_sentiment_csv: output/text/sentence_sentiment_llm.csv
-  sentences_with_geo_offline_gpkg: output/text/sentences_with_geo_offline.gpkg
-  sentences_with_geo_gpkg: output/text/sentences_with_geo.gpkg
-  sentence_offline_geocoding_csv: output/text/sentence_offline_geocoding.csv
   nominatim_cache_json: cache/nominatim_cache.json
   sentences_with_categories_gpkg: output/text/sentences_with_categories.gpkg
   sentences_with_categories_long_csv: output/text/sentences_with_categories_long.csv

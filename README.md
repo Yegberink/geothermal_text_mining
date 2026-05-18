@@ -1,8 +1,8 @@
 # Geothermal Text Mining Workflow
 
-This repository contains a Snakemake workflow for mining geothermal-related newspaper text, extracting locations, assigning frames and sentiment at sentence level, geocoding the matched locations, aggregating the results to Dutch administrative areas, and preparing annotation data for manual review.
+This repository contains a Snakemake workflow for mining geothermal-related newspaper text, extracting and geocoding paragraph-level locations, assigning frames and sentiment at sentence level, aggregating the results to Dutch administrative areas, and preparing annotation data for manual review.
 
-The workflow is paragraph-based at the geothermal relevance and location-extraction stage, and sentence-based for frame detection, sentiment, geocoding outputs, visualisation inputs, and annotation.
+The workflow is paragraph-based for keyword prefiltering, geothermal relevance, location extraction, and geocoding. It is sentence-based for frame detection, sentiment, visualisation inputs, and annotation. Sentence rows inherit the paragraph-level location and geometry fields.
 
 ## Current workflow
 
@@ -10,33 +10,37 @@ The current `Snakefile` runs the following pipeline:
 
 1. `scripts/preprocess_rtf_to_paragraphs.py`
    Converts raw `.rtf` newspaper files into cleaned article and paragraph tables.
-2. `scripts/is_geothermal.py`
+2. `scripts/update_keywords_framework.py`
+   Builds the effective keyword framework from the base vocabulary and accepted review additions.
+3. `scripts/filter_paragraphs_by_keywords.py`
+   Keeps only paragraphs that mention at least one keyword from the effective framework.
+4. `scripts/is_geothermal.py`
    Uses Ollama to classify whether each paragraph is mainly about geothermal energy.
-3. `scripts/locations_ollama.py`
+5. `scripts/locations_ollama.py`
    Uses Ollama to extract the primary location discussed in each geothermal paragraph.
-4. `scripts/split_paragraphs_to_sentences.py`
-   Splits geothermal paragraphs into sentence-level rows while keeping paragraph context and the paragraph-level location output.
-5. `scripts/classification_sentences.py`
+6. `scripts/geocoding_offline.py`
+   Matches the extracted paragraph location against municipality and province layers locally.
+7. `scripts/geocoding_online.py`
+   Optionally enriches unresolved or fine-grained paragraph locations through online geocoding.
+8. `scripts/split_paragraphs_to_sentences.py`
+   Splits geocoded paragraphs into sentence-level rows while keeping paragraph context and paragraph-level location/geometry output.
+9. `scripts/classification_sentences.py`
    Runs keyword-based frame matching on the sentence table and keeps only sentences with at least one matched frame.
-6. `scripts/sentiment_classification.py`
+10. `scripts/sentiment_classification.py`
    Runs a local Ollama sentiment classifier on the frame-bearing sentences.
    Duplicate `sentence_text` values are cached locally to avoid repeated model calls.
-7. `scripts/geocoding_offline.py`
-   Matches the extracted paragraph location against municipality and province layers locally.
-8. `scripts/geocoding_online.py`
-   Optionally enriches unresolved or fine-grained locations through online geocoding.
-9. `scripts/classification_sentences.py`
-   Rebuilds the geocoded sentence-level frame outputs and exports long and short sentence tables.
-10. `scripts/geographic_aggregation.py`
+11. `scripts/classification_sentences.py`
+   Builds the geocoded sentence-level frame outputs from inherited paragraph geometry and exports long/short tables plus a GeoPackage.
+12. `scripts/geographic_aggregation.py`
     Adds municipality and province labels to the sentence-level geocoded outputs.
-11. `scripts/visualize_absa_results.py`
+13. `scripts/visualize_absa_results.py`
     Produces the province-level and category-level sentiment figures plus an interactive HTML location map.
-12. `scripts/make_annotation_df.py`
+14. `scripts/make_annotation_df.py`
     Builds the sentence-level annotation CSV used by the Streamlit annotation app.
 
 In short, the current workflow is:
 
-`RTF files -> cleaned paragraphs -> geothermal paragraph classification -> paragraph location extraction -> sentence split -> frame matching -> sentence sentiment -> geocoding -> sentence frame outputs -> admin aggregation -> figures + interactive map + annotation export`
+`RTF files -> cleaned paragraphs -> paragraph keyword filter -> geothermal paragraph classification -> paragraph location extraction -> paragraph geocoding -> sentence split with inherited geo fields -> sentence frame matching -> sentence sentiment -> sentence frame outputs -> admin aggregation -> figures + interactive map + annotation export`
 
 ## Main files
 
@@ -63,12 +67,13 @@ With `language: dutch`, the main outputs are written under `output/dutch/`.
 ### Main intermediate outputs
 
 - `output/dutch/text/newspapers_cleaned_paragraphs.csv`
+- `output/dutch/text/newspapers_keyword_filtered_paragraphs.csv`
 - `output/dutch/text/paragraph_geothermal_ollama.csv`
 - `output/dutch/text/paragraph_locations_ollama.csv`
+- `output/dutch/text/paragraphs_with_geo.csv`
 - `output/dutch/text/sentence_locations_ollama.csv`
 - `output/dutch/text/sentences_with_frames_long.csv`
 - `output/dutch/text/sentence_sentiment_llm.csv`
-- `output/dutch/text/sentences_with_geo.gpkg`
 - `output/dutch/text/sentences_with_categories.gpkg`
 - `output/dutch/text/sentences_with_categories_admin.csv`
 
@@ -204,6 +209,7 @@ annotation/sentiment_model_assessment/analysis.ipynb
 
 ## Notes on outputs
 
+- The paragraph keyword filter is only an inclusion filter; frame labels are still assigned at sentence level.
 - The sentence-level frame filter is applied before sentiment, so only sentences with a matched frame are sent to the sentiment classifier.
 - Sentiment caching uses `sentence_text` together with the configured model and prompt variant to reduce repeated model calls.
 - The location output in `output/{language}/figures/locations_map.html` is interactive:

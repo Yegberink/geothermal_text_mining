@@ -72,6 +72,7 @@ rule preprocess_rtf_to_paragraphs:
     input:
         input_dir=PATHS["input_rtf_dir"],
         regions=PATHS["newspaper_regions_csv"],
+        script=str(PROJECT_DIR / "scripts" / "preprocess_rtf_to_paragraphs.py"),
     output:
         paragraphs=PATHS["paragraphs_csv"],
         articles=PATHS["articles_csv"],
@@ -87,9 +88,44 @@ rule preprocess_rtf_to_paragraphs:
         """
 
 
+rule update_keyword_framework:
+    input:
+        base_csv=PATHS["keywords_topics_base_csv"],
+    output:
+        keywords_csv=PATHS["keywords_topics_csv"],
+        audit_csv=PATHS["keyword_framework_audit_csv"],
+    params:
+        review_csv=PATHS["keyword_review_export_csv"],
+    shell:
+        """
+        {PYTHON} scripts/update_keywords_framework.py \
+          --project-dir {PROJECT_DIR} \
+          --base-csv {input.base_csv} \
+          --review-csv {params.review_csv} \
+          --output-csv {output.keywords_csv} \
+          --audit-csv {output.audit_csv}
+        """
+
+
+rule filter_paragraphs_by_keywords:
+    input:
+        paragraphs=PATHS["paragraphs_csv"],
+        keywords=PATHS["keywords_topics_csv"],
+    output:
+        PATHS["paragraph_keyword_filtered_csv"],
+    shell:
+        """
+        {PYTHON} scripts/filter_paragraphs_by_keywords.py \
+          --project-dir {PROJECT_DIR} \
+          --input-csv {input.paragraphs} \
+          --keywords-csv {input.keywords} \
+          --output-csv {output}
+        """
+
+
 rule classify_geothermal:
     input:
-        PATHS["paragraphs_csv"],
+        PATHS["paragraph_keyword_filtered_csv"],
     output:
         csv=PATHS["paragraph_geothermal_csv"],
     params:
@@ -147,9 +183,77 @@ rule extract_locations:
         """
 
 
+rule geocode_paragraphs_offline:
+    input:
+        csv=PATHS["paragraph_locations_csv"],
+        muni=PATHS["municipality_gpkg"],
+        prov=PATHS["province_gpkg"],
+    output:
+        gpkg=PATHS["paragraphs_with_geo_offline_gpkg"],
+        csv=PATHS["paragraph_offline_geocoding_csv"],
+    shell:
+        """
+        {PYTHON} scripts/geocoding_offline.py \
+          --project-dir {PROJECT_DIR} \
+          --input-csv {input.csv} \
+          --municipality-gpkg {input.muni} \
+          --province-gpkg {input.prov} \
+          --output-gpkg {output.gpkg} \
+          --output-csv {output.csv} \
+          --points-layer paragraphs_points \
+          --polygons-layer paragraphs_polygons
+        """
+
+
+rule geocode_paragraphs_online:
+    input:
+        csv=PATHS["paragraph_offline_geocoding_csv"],
+        muni=PATHS["municipality_gpkg"],
+        prov=PATHS["province_gpkg"],
+    output:
+        gpkg=PATHS["paragraphs_with_geo_gpkg"],
+        csv=PATHS["paragraphs_with_geo_csv"],
+    params:
+        cache=PATHS["nominatim_cache_json"],
+        country_codes=ONLINE_GEOCODING.get("country_codes") or _default_country_codes(COUNTRY),
+        user_agent=ONLINE_GEOCODING.get("user_agent", "absa-geo-mapper"),
+        save_every=ONLINE_GEOCODING.get("save_every", 50),
+        print_every=ONLINE_GEOCODING.get("print_every", 25),
+        min_delay_seconds=ONLINE_GEOCODING.get("min_delay_seconds", 1.1),
+        timeout_seconds=ONLINE_GEOCODING.get("timeout_seconds", 10),
+        max_retries=ONLINE_GEOCODING.get("max_retries", 6),
+        backoff_base=ONLINE_GEOCODING.get("backoff_base", 1.6),
+        jitter=ONLINE_GEOCODING.get("jitter", 0.25),
+        max_queries=ONLINE_GEOCODING.get("max_queries", 0),
+    shell:
+        """
+        {PYTHON} scripts/geocoding_online.py \
+          --project-dir {PROJECT_DIR} \
+          --input-csv {input.csv} \
+          --municipality-gpkg {input.muni} \
+          --province-gpkg {input.prov} \
+          --output-gpkg {output.gpkg} \
+          --output-csv {output.csv} \
+          --cache-path {params.cache} \
+          --country "{COUNTRY}" \
+          --country-codes "{params.country_codes}" \
+          --user-agent {params.user_agent} \
+          --save-every {params.save_every} \
+          --print-every {params.print_every} \
+          --min-delay-seconds {params.min_delay_seconds} \
+          --timeout-seconds {params.timeout_seconds} \
+          --max-retries {params.max_retries} \
+          --backoff-base {params.backoff_base} \
+          --jitter {params.jitter} \
+          --max-queries {params.max_queries} \
+          --points-layer paragraphs_points \
+          --polygons-layer paragraphs_polygons
+        """
+
+
 rule split_paragraphs_to_sentences:
     input:
-        PATHS["paragraph_locations_csv"],
+        PATHS["paragraphs_with_geo_csv"],
     output:
         PATHS["sentence_locations_csv"],
     shell:
@@ -159,25 +263,6 @@ rule split_paragraphs_to_sentences:
           --input-csv {input} \
           --output-csv {output} \
           --language {LANGUAGE}
-        """
-
-
-rule update_keyword_framework:
-    input:
-        base_csv=PATHS["keywords_topics_base_csv"],
-    output:
-        keywords_csv=PATHS["keywords_topics_csv"],
-        audit_csv=PATHS["keyword_framework_audit_csv"],
-    params:
-        review_csv=PATHS["keyword_review_export_csv"],
-    shell:
-        """
-        {PYTHON} scripts/update_keywords_framework.py \
-          --project-dir {PROJECT_DIR} \
-          --base-csv {input.base_csv} \
-          --review-csv {params.review_csv} \
-          --output-csv {output.keywords_csv} \
-          --audit-csv {output.audit_csv}
         """
 
 
@@ -252,75 +337,9 @@ rule classify_sentence_sentiment:
         """
 
 
-rule geocode_sentences_offline:
-    input:
-        csv=PATHS["sentence_sentiment_csv"],
-        muni=PATHS["municipality_gpkg"],
-        prov=PATHS["province_gpkg"],
-    output:
-        gpkg=PATHS["sentences_with_geo_offline_gpkg"],
-        csv=PATHS["sentence_offline_geocoding_csv"],
-    shell:
-        """
-        {PYTHON} scripts/geocoding_offline.py \
-          --project-dir {PROJECT_DIR} \
-          --input-csv {input.csv} \
-          --municipality-gpkg {input.muni} \
-          --province-gpkg {input.prov} \
-          --output-gpkg {output.gpkg} \
-          --output-csv {output.csv} \
-          --points-layer sentences_points \
-          --polygons-layer sentences_polygons
-        """
-
-
-rule geocode_sentences_online:
-    input:
-        csv=PATHS["sentence_offline_geocoding_csv"],
-        muni=PATHS["municipality_gpkg"],
-        prov=PATHS["province_gpkg"],
-    output:
-        gpkg=PATHS["sentences_with_geo_gpkg"],
-    params:
-        cache=PATHS["nominatim_cache_json"],
-        country_codes=ONLINE_GEOCODING.get("country_codes") or _default_country_codes(COUNTRY),
-        user_agent=ONLINE_GEOCODING.get("user_agent", "absa-geo-mapper"),
-        save_every=ONLINE_GEOCODING.get("save_every", 50),
-        print_every=ONLINE_GEOCODING.get("print_every", 25),
-        min_delay_seconds=ONLINE_GEOCODING.get("min_delay_seconds", 1.1),
-        timeout_seconds=ONLINE_GEOCODING.get("timeout_seconds", 10),
-        max_retries=ONLINE_GEOCODING.get("max_retries", 6),
-        backoff_base=ONLINE_GEOCODING.get("backoff_base", 1.6),
-        jitter=ONLINE_GEOCODING.get("jitter", 0.25),
-        max_queries=ONLINE_GEOCODING.get("max_queries", 0),
-    shell:
-        """
-        {PYTHON} scripts/geocoding_online.py \
-          --project-dir {PROJECT_DIR} \
-          --input-csv {input.csv} \
-          --municipality-gpkg {input.muni} \
-          --province-gpkg {input.prov} \
-          --output-gpkg {output.gpkg} \
-          --cache-path {params.cache} \
-          --country "{COUNTRY}" \
-          --country-codes "{params.country_codes}" \
-          --user-agent {params.user_agent} \
-          --save-every {params.save_every} \
-          --print-every {params.print_every} \
-          --min-delay-seconds {params.min_delay_seconds} \
-          --timeout-seconds {params.timeout_seconds} \
-          --max-retries {params.max_retries} \
-          --backoff-base {params.backoff_base} \
-          --jitter {params.jitter} \
-          --max-queries {params.max_queries} \
-          --points-layer sentences_points \
-          --polygons-layer sentences_polygons
-        """
-
-
 rule classify_sentence_categories:
     input:
-        gpkg=PATHS["sentences_with_geo_gpkg"],
+        csv=PATHS["sentence_sentiment_csv"],
         keywords=PATHS["keywords_topics_csv"],
     output:
         gpkg=PATHS["sentences_with_categories_gpkg"],
@@ -330,11 +349,10 @@ rule classify_sentence_categories:
         """
         {PYTHON} scripts/classification_sentences.py \
           --project-dir {PROJECT_DIR} \
-          --input-gpkg {input.gpkg} \
-          --input-point-layer sentences_points \
-          --input-polygon-layer sentences_polygons \
+          --input-csv {input.csv} \
           --keywords-csv {input.keywords} \
           --output-gpkg {output.gpkg} \
+          --output-layer sentences_with_categories \
           --output-long-csv {output.long_csv} \
           --output-short-csv {output.short_csv} \
           --keep-only-matched True
