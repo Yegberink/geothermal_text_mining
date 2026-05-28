@@ -21,6 +21,7 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434/api/generate"
 DEFAULT_MODEL = "llama3.1:8b"
 DEFAULT_LANGUAGE = "dutch"
 DEFAULT_PROMPT_VARIANT = "zero_shot"
+ROW_UID_COL = "_row_uid"
 SENTIMENTS = ["negative", "neutral", "positive"]
 OLLAMA_SYSTEM_PROMPT = (
     "You are a careful sentiment classification assistant for newspaper sentences about geothermal energy. "
@@ -65,6 +66,27 @@ def make_uid(row: Dict[str, object]) -> str:
         ]
     )
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def set_unique_row_index(df: pd.DataFrame, uid_col: str = "sentence_uid") -> pd.DataFrame:
+    """Keep the semantic uid as data, but use a unique key for checkpoint alignment."""
+    out = df.copy()
+    if uid_col not in out.columns:
+        if out.index.name == uid_col:
+            out[uid_col] = out.index
+        else:
+            out[uid_col] = out.apply(make_uid, axis=1)
+    if out.index.name == uid_col:
+        out = out.reset_index(drop=True)
+
+    out[uid_col] = out[uid_col].astype(str)
+    duplicate_mask = out[uid_col].duplicated(keep=False)
+    occurrence = out.groupby(uid_col, sort=False).cumcount().astype(str)
+    out[ROW_UID_COL] = out[uid_col]
+    out.loc[duplicate_mask, ROW_UID_COL] = (
+        out.loc[duplicate_mask, uid_col] + "__dup" + occurrence.loc[duplicate_mask]
+    )
+    return out.set_index(ROW_UID_COL, drop=True)
 
 
 def _fingerprint(text: str, model_name: str, prompt_variant: str, language: str) -> str:
@@ -261,14 +283,16 @@ def batch_sentiment_resumable(
 ) -> pd.DataFrame:
     if checkpoint_path.exists():
         out = pd.read_parquet(checkpoint_path)
-        if out.index.name and out.index.name in out.columns:
-            out = out.set_index(out.index.name, drop=False)
+        out = set_unique_row_index(out)
         out = out.reindex(df.index)
         for c in df.columns:
             # Always refresh source columns from the current input so reruns with
             # an updated frame framework keep the latest sentence metadata while
             # preserving previously computed sentiment outputs by sentence_uid.
             out[c] = df[c]
+        restarted = restart_error_rows(out)
+        if restarted:
+            print(f"[resume] Restarting {restarted} sentiment rows that previously errored.")
     else:
         out = df.copy()
         out["sentiment"] = None
@@ -363,6 +387,31 @@ def batch_sentiment_resumable(
     return out
 
 
+def incomplete_count(out: pd.DataFrame) -> int:
+    if "sentiment_status" not in out.columns:
+        return len(out)
+    return int((~out["sentiment_status"].isin(["ok", "empty"])).sum())
+
+
+def restart_error_rows(out: pd.DataFrame) -> int:
+    if "sentiment_status" not in out.columns:
+        return 0
+    error_mask = out["sentiment_status"].eq("error")
+    restarted = int(error_mask.sum())
+    if restarted:
+        reset_values = {
+            "sentiment": None,
+            "sentiment_norm": None,
+            "sentiment_confidence": 0.0,
+            "sentiment_evidence_short": None,
+            "sentiment_status": None,
+            "sentiment_error": None,
+        }
+        for col, value in reset_values.items():
+            out.loc[error_mask, col] = value
+    return restarted
+
+
 def sentiment_result_columns(df: pd.DataFrame) -> list[str]:
     cols = [
         "sentiment",
@@ -395,7 +444,7 @@ def main() -> None:
     df = df.copy()
     if "sentence_uid" not in df.columns:
         df["sentence_uid"] = df.apply(make_uid, axis=1)
-    df = df.set_index("sentence_uid", drop=False)
+    df = set_unique_row_index(df)
 
     out = batch_sentiment_resumable(
         df=df,
@@ -414,9 +463,17 @@ def main() -> None:
 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     to_write = out.reset_index(drop=True)
-    to_write.to_csv(output_csv, index=False, encoding="utf-8")
     ok_n = int((to_write.get("sentiment_status") == "ok").sum()) if "sentiment_status" in to_write.columns else 0
     err_n = int((to_write.get("sentiment_status") == "error").sum()) if "sentiment_status" in to_write.columns else 0
+    remaining = incomplete_count(out)
+    if remaining:
+        raise RuntimeError(
+            f"Sentence sentiment classification is incomplete ({remaining} rows unfinished). "
+            f"Progress is saved in {checkpoint_path}"
+            + (f" and {partial_csv_path}" if partial_csv_path is not None else "")
+            + "; not writing the final Snakemake output CSV."
+        )
+    to_write.to_csv(output_csv, index=False, encoding="utf-8")
     print(f"Wrote sentiment output: {output_csv}")
     print(f"Sentiment rows={len(to_write)}, ok={ok_n}, error={err_n}")
     print(f"[workflow_table] sentences_sent_to_sentiment: {len(to_write)}")

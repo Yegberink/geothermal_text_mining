@@ -1,0 +1,26 @@
+month_translations:
+  gennaio: January
+  febbraio: February
+  marzo: March
+  aprile: April
+  maggio: May
+  giugno: June
+  luglio: July
+  agosto: August
+  settembre: September
+  ottobre: October
+  novembre: November
+  dicembre: December
+weekday_names:
+  - lunedì
+  - lunedi
+  - martedì
+  - martedi
+  - mercoledì
+  - mercoledi
+  - giovedì
+  - giovedi
+  - venerdì
+  - venerdi
+  - sabato
+  - domenica

@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import plotly.graph_objects as go
 
+from language_resources import country_aliases, load_location_province_overrides
+
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 SENTIMENT_ORDER = ["negative", "neutral", "positive"]
@@ -23,11 +25,7 @@ SENTIMENT_COLORS = {
     "positive": "#009E73",
 }
 MIN_PROVINCE_SENTENCES = 31
-LOCATION_PROVINCE_OVERRIDES = {
-    "den helder": "Noord-Holland",
-    "waddenzee": "Fryslân",
-}
-NETHERLANDS_LOCATION_NAMES = {"nederland", "netherlands"}
+LOCATION_PROVINCE_OVERRIDES = {}
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,6 +36,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--keywords-csv", type=str, default="vocab/keywords_topics.csv")
     ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
     ap.add_argument("--output-dir", type=str, default="output/figures")
+    ap.add_argument("--country", type=str, default="Netherlands")
+    ap.add_argument("--location-province-overrides", type=str, default="")
     return ap.parse_args()
 
 
@@ -95,7 +95,10 @@ def normalize_location_value(value: object) -> str:
     return text.strip()
 
 
-def apply_province_overrides(df: pd.DataFrame) -> pd.DataFrame:
+def apply_province_overrides(
+    df: pd.DataFrame,
+    location_province_overrides: dict[str, str] | None = None,
+) -> pd.DataFrame:
     df = df.copy()
     if "province_name" not in df.columns:
         return df
@@ -108,21 +111,23 @@ def apply_province_overrides(df: pd.DataFrame) -> pd.DataFrame:
     for col in location_cols:
         combined = combined + " | " + df[col].map(normalize_location_value)
 
-    for loc_norm, province_name in LOCATION_PROVINCE_OVERRIDES.items():
+    overrides = location_province_overrides if location_province_overrides is not None else LOCATION_PROVINCE_OVERRIDES
+    for loc_norm, province_name in overrides.items():
         mask = combined.str.contains(rf"(?:^| \| ){re.escape(loc_norm)}(?:$| \| )", regex=True, na=False)
         df.loc[mask, "province_name"] = province_name
 
     return df
 
 
-def is_netherlands_location(df: pd.DataFrame) -> pd.Series:
+def is_country_location(df: pd.DataFrame, country: str) -> pd.Series:
     location_cols = [c for c in ["_loc_norm", "_loc_first", "llm_location", "geo_name_matched"] if c in df.columns]
     if not location_cols:
         return pd.Series(False, index=df.index)
 
+    aliases = {normalize_location_value(alias) for alias in country_aliases(country)}
     mask = pd.Series(False, index=df.index)
     for col in location_cols:
-        mask = mask | df[col].map(normalize_location_value).isin(NETHERLANDS_LOCATION_NAMES)
+        mask = mask | df[col].map(normalize_location_value).isin(aliases)
     return mask
 
 
@@ -153,7 +158,11 @@ def load_frame_keyword_vocab(path: Path) -> tuple[list[str], dict[str, set[str]]
     return frame_order, frame_keywords, display_lookup
 
 
-def build_province_summary(admin_df: pd.DataFrame) -> pd.DataFrame:
+def build_province_summary(
+    admin_df: pd.DataFrame,
+    country: str,
+    location_province_overrides: dict[str, str],
+) -> pd.DataFrame:
     df = admin_df.copy()
     if "province_name" not in df.columns:
         raise ValueError("Expected 'province_name' column in administrative CSV.")
@@ -164,10 +173,10 @@ def build_province_summary(admin_df: pd.DataFrame) -> pd.DataFrame:
 
     df["_sent"] = normalize_sentiment(df[sentiment_source_col])
     df = df[df["_sent"].isin(SENTIMENT_ORDER)].copy()
-    df = apply_province_overrides(df)
+    df = apply_province_overrides(df, location_province_overrides)
 
     has_province = df["province_name"].notna() & df["province_name"].astype(str).str.strip().ne("")
-    include_in_overall = has_province | (~has_province & is_netherlands_location(df))
+    include_in_overall = has_province | (~has_province & is_country_location(df, country))
     overall_counts = df.loc[include_in_overall, "_sent"].value_counts().reindex(SENTIMENT_ORDER, fill_value=0)
     overall_total = int(overall_counts.sum())
     overall = pd.DataFrame(
@@ -861,12 +870,15 @@ def main() -> None:
     categories_df = pd.read_csv(args.categories_csv)
     frame_order, frame_keywords, display_lookup = load_frame_keyword_vocab(Path(args.keywords_csv))
     province_gpkg = Path(args.province_gpkg)
+    location_province_overrides = load_location_province_overrides(
+        Path(args.location_province_overrides) if args.location_province_overrides else None
+    )
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     frame_keywords_dir = output_dir / "frame_keywords"
 
-    province_tbl = build_province_summary(admin_df)
+    province_tbl = build_province_summary(admin_df, args.country, location_province_overrides)
     province_tbl.to_csv(output_dir / "province_sentiment_table.csv", index=False)
 
     plot_province_sentiment_balance(

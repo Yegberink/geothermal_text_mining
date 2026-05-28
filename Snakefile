@@ -1,4 +1,7 @@
 from pathlib import Path
+import hashlib
+import re
+import shlex
 
 configfile: "config/config.yaml"
 
@@ -40,8 +43,62 @@ def _default_country_codes(country):
     mapping = {
         "netherlands": "nl,be,bq,aw,cw,sx",
         "italy": "it,sm,va",
+        "germany": "de",
+        "deutschland": "de",
     }
     return mapping.get(country_norm, "")
+
+
+def _language_resource_path(filename):
+    if LANGUAGE:
+        return str(Path("vocab") / LANGUAGE / filename)
+    return str(Path("vocab") / filename)
+
+
+PREPROCESS_RTF_CHUNKS_DIR = PATHS.get(
+    "preprocess_rtf_chunks_dir",
+    str(Path(PATHS["paragraphs_csv"]).parent / "_preprocess_rtf_chunks"),
+)
+
+
+def _discover_rtf_input_files():
+    input_dir = Path(PATHS["input_rtf_dir"])
+    if not input_dir.exists():
+        return []
+    return sorted(
+        str(path)
+        for path in input_dir.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() == ".rtf"
+        and "doclist" not in path.stem.lower()
+    )
+
+
+def _rtf_id_for_path(path_str):
+    input_dir = Path(PATHS["input_rtf_dir"])
+    path = Path(path_str)
+    try:
+        rel = path.relative_to(input_dir).as_posix()
+    except ValueError:
+        rel = path.name
+    stem = Path(rel).with_suffix("").as_posix()
+    safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("._-") or "rtf"
+    digest = hashlib.sha1(rel.encode("utf-8")).hexdigest()[:10]
+    return f"{safe_stem[:90]}-{digest}"
+
+
+RTF_INPUT_FILES = _discover_rtf_input_files()
+RTF_ID_TO_INPUT = {_rtf_id_for_path(path): path for path in RTF_INPUT_FILES}
+RTF_IDS = sorted(RTF_ID_TO_INPUT)
+RTF_RAW_ARTICLE_CHUNKS = [
+    str(Path(PREPROCESS_RTF_CHUNKS_DIR) / "raw_articles" / f"{rtf_id}.csv")
+    for rtf_id in RTF_IDS
+]
+RTF_RAW_ARTICLE_ARGS = (
+    "--input-raw-articles-csv " + " ".join(shlex.quote(path) for path in RTF_RAW_ARTICLE_CHUNKS)
+    if RTF_RAW_ARTICLE_CHUNKS
+    else ""
+)
 
 
 ALL_TARGETS = [
@@ -68,22 +125,45 @@ rule all:
         ALL_TARGETS,
 
 
+rule preprocess_single_rtf_to_raw_articles:
+    input:
+        rtf=lambda wildcards: RTF_ID_TO_INPUT[wildcards.rtf_id],
+        script=str(PROJECT_DIR / "scripts" / "preprocess_rtf_to_paragraphs.py"),
+    output:
+        raw=str(Path(PREPROCESS_RTF_CHUNKS_DIR) / "raw_articles" / "{rtf_id}.csv"),
+    params:
+        input_dir=PATHS["input_rtf_dir"],
+    shell:
+        """
+        {PYTHON} scripts/preprocess_rtf_to_paragraphs.py \
+          --project-dir {PROJECT_DIR} \
+          --input-rtf-dir {params.input_dir:q} \
+          --input-rtf-file {input.rtf:q} \
+          --output-raw-articles-csv {output.raw:q} \
+          --raw-only
+        """
+
+
 rule preprocess_rtf_to_paragraphs:
     input:
-        input_dir=PATHS["input_rtf_dir"],
+        chunks=RTF_RAW_ARTICLE_CHUNKS,
         regions=PATHS["newspaper_regions_csv"],
         script=str(PROJECT_DIR / "scripts" / "preprocess_rtf_to_paragraphs.py"),
     output:
         paragraphs=PATHS["paragraphs_csv"],
         articles=PATHS["articles_csv"],
+    params:
+        input_dir=PATHS["input_rtf_dir"],
+        raw_article_args=RTF_RAW_ARTICLE_ARGS,
     shell:
         """
         {PYTHON} scripts/preprocess_rtf_to_paragraphs.py \
           --project-dir {PROJECT_DIR} \
-          --input-rtf-dir {input.input_dir} \
-          --newspaper-region-csv {input.regions} \
-          --output-paragraph-csv {output.paragraphs} \
-          --output-articles-csv {output.articles} \
+          --input-rtf-dir {params.input_dir:q} \
+          {params.raw_article_args} \
+          --newspaper-region-csv {input.regions:q} \
+          --output-paragraph-csv {output.paragraphs:q} \
+          --output-articles-csv {output.articles:q} \
           --write-articles-csv
         """
 
@@ -200,6 +280,7 @@ rule geocode_paragraphs_offline:
           --province-gpkg {input.prov} \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv} \
+          --country "{COUNTRY}" \
           --points-layer paragraphs_points \
           --polygons-layer paragraphs_polygons
         """
@@ -367,6 +448,8 @@ rule aggregate_to_admin_areas:
     output:
         gpkg=PATHS["sentences_with_categories_admin_gpkg"],
         csv=PATHS["sentences_with_categories_admin_csv"],
+    params:
+        location_overrides=_language_resource_path("location_province_overrides.csv"),
     shell:
         """
         {PYTHON} scripts/geographic_aggregation.py \
@@ -376,7 +459,8 @@ rule aggregate_to_admin_areas:
           --municipality-gpkg {input.muni} \
           --province-gpkg {input.prov} \
           --output-gpkg {output.gpkg} \
-          --output-csv {output.csv}
+          --output-csv {output.csv} \
+          --location-province-overrides {params.location_overrides}
         """
 
 
@@ -418,6 +502,7 @@ rule visualize_absa_results:
         heatmap=PATHS["locations_map_html"],
     params:
         output_dir=PATHS["figures_dir"],
+        location_overrides=_language_resource_path("location_province_overrides.csv"),
     shell:
         """
         {PYTHON} scripts/visualize_absa_results.py \
@@ -426,7 +511,9 @@ rule visualize_absa_results:
           --categories-csv {input.categories_csv} \
           --keywords-csv {input.keywords_csv} \
           --province-gpkg {input.province_gpkg} \
-          --output-dir {params.output_dir}
+          --output-dir {params.output_dir} \
+          --country "{COUNTRY}" \
+          --location-province-overrides {params.location_overrides}
         """
 
 

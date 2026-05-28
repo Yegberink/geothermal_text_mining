@@ -7,6 +7,7 @@ import json
 import os
 import random
 import re
+import sys
 import time
 import unicodedata
 from pathlib import Path
@@ -21,6 +22,32 @@ from shapely.geometry import Point
 from shapely.ops import unary_union
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+
+
+def configure_ssl_cert_bundle() -> None:
+    """Use the active environment's CA bundle unless the caller set one."""
+    if os.environ.get("SSL_CERT_FILE") and os.environ.get("REQUESTS_CA_BUNDLE"):
+        return
+
+    candidates = []
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        candidates.append(Path(conda_prefix) / "ssl" / "cert.pem")
+    candidates.append(Path(sys.prefix) / "ssl" / "cert.pem")
+
+    try:
+        import certifi
+
+        candidates.append(Path(certifi.where()))
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        if candidate.exists():
+            os.environ.setdefault("SSL_CERT_FILE", str(candidate))
+            os.environ.setdefault("REQUESTS_CA_BUNDLE", str(candidate))
+            return
+
 
 EXTERNAL_LOCATION_POINTS = {
     "kenia": ("Kenya", -0.0236, 37.9062),
@@ -78,12 +105,17 @@ def pick_col_by_regex(cols, patterns):
     return None
 
 
+def projected_crs_for(gdf: gpd.GeoDataFrame):
+    try:
+        return gdf.estimate_utm_crs()
+    except Exception:
+        return "EPSG:3857"
+
+
 def with_wgs84_centroids(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     gdf = gdf.copy()
-    try:
-        proj = gdf.to_crs("EPSG:28992")
-    except Exception:
-        proj = gdf.to_crs("EPSG:3857")
+    proj_crs = projected_crs_for(gdf)
+    proj = gdf.to_crs(proj_crs)
     proj["_centroid_proj"] = proj.geometry.centroid
 
     wgs = gdf.to_crs("EPSG:4326")
@@ -140,13 +172,18 @@ def robust_geocode(
             res = {"lat": float(loc.latitude), "lon": float(loc.longitude), "disp": str(loc)}
             cache[query] = res
             return res
-        except (GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError):
+        except (GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError) as exc:
+            if "CERTIFICATE_VERIFY_FAILED" in str(exc):
+                raise RuntimeError(
+                    "Nominatim SSL certificate verification failed. Fix the Python/pixi "
+                    "certificate bundle before rerunning; this is not a missing geocode."
+                ) from exc
             time.sleep((backoff_base ** attempt) + random.random() * jitter)
         except Exception:
             cache[query] = None
             return None
 
-    cache[query] = None
+    print(f"[warning] Nominatim failed after {max_retries} retries for {query!r}; not caching as no-match.")
     return None
 
 
@@ -183,6 +220,7 @@ def build_output_gpkg(df: pd.DataFrame, output_gpkg: Path, points_layer: str, po
 
 def main() -> None:
     args = parse_args()
+    configure_ssl_cert_bundle()
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
 
@@ -232,7 +270,8 @@ def main() -> None:
     geocode_rl = RateLimiter(
         geolocator.geocode,
         min_delay_seconds=args.min_delay_seconds,
-        swallow_exceptions=True,
+        max_retries=0,
+        swallow_exceptions=False,
     )
 
     def inside_country(lon, lat):
@@ -367,8 +406,10 @@ def main() -> None:
             if df.at[i, "_gran"] == "municipality":
                 if inside_country(lon, lat) and info.get("_muni_geom") is not None and not pd.isna(info.get("_muni_geom")):
                     muni_geom = info["_muni_geom"]
-                    c = gpd.GeoSeries([muni_geom], crs="EPSG:4326").to_crs("EPSG:28992").centroid
-                    c = gpd.GeoSeries(c, crs="EPSG:28992").to_crs("EPSG:4326").iloc[0]
+                    muni_series = gpd.GeoSeries([muni_geom], crs="EPSG:4326")
+                    proj_crs = projected_crs_for(gpd.GeoDataFrame(geometry=muni_series, crs="EPSG:4326"))
+                    c = muni_series.to_crs(proj_crs).centroid
+                    c = gpd.GeoSeries(c, crs=proj_crs).to_crs("EPSG:4326").iloc[0]
                     df.at[i, "geo_level"] = "municipality"
                     df.at[i, "geo_source"] = "nominatim->sjoin(cbs)"
                     df.at[i, "geo_name_matched"] = str(info.get("_muni_name") or disp)
@@ -387,8 +428,10 @@ def main() -> None:
             if df.at[i, "_gran"] == "province":
                 if inside_country(lon, lat) and info.get("_prov_geom") is not None and not pd.isna(info.get("_prov_geom")):
                     prov_geom = info["_prov_geom"]
-                    c = gpd.GeoSeries([prov_geom], crs="EPSG:4326").to_crs("EPSG:28992").centroid
-                    c = gpd.GeoSeries(c, crs="EPSG:28992").to_crs("EPSG:4326").iloc[0]
+                    prov_series = gpd.GeoSeries([prov_geom], crs="EPSG:4326")
+                    proj_crs = projected_crs_for(gpd.GeoDataFrame(geometry=prov_series, crs="EPSG:4326"))
+                    c = prov_series.to_crs(proj_crs).centroid
+                    c = gpd.GeoSeries(c, crs=proj_crs).to_crs("EPSG:4326").iloc[0]
                     df.at[i, "geo_level"] = "province"
                     df.at[i, "geo_source"] = "nominatim->sjoin(cbs)"
                     df.at[i, "geo_name_matched"] = str(info.get("_prov_name") or disp)

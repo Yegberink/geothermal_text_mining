@@ -6,12 +6,11 @@ from pathlib import Path
 
 import geopandas as gpd
 
+from language_resources import load_location_province_overrides
+
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
-LOCATION_PROVINCE_OVERRIDES = {
-    "den helder": "Noord-Holland",
-    "waddenzee": "Fryslân",
-}
+LOCATION_PROVINCE_OVERRIDES = {}
 
 
 def pick_col_by_regex(cols, patterns):
@@ -40,6 +39,7 @@ def apply_location_province_overrides(
     prov_gdf: gpd.GeoDataFrame,
     prov_name_col: str,
     prov_code_col: str | None = None,
+    location_province_overrides: dict[str, str] | None = None,
 ) -> gpd.GeoDataFrame:
     text_gdf = text_gdf.copy()
     location_cols = [c for c in ["_loc_norm", "_loc_first", "llm_location", "geo_name_matched"] if c in text_gdf.columns]
@@ -57,7 +57,8 @@ def apply_location_province_overrides(
         col_norm = text_gdf[col].map(norm)
         combined = col_norm if combined is None else combined + " | " + col_norm
 
-    for loc_norm, province_name in LOCATION_PROVINCE_OVERRIDES.items():
+    overrides = location_province_overrides if location_province_overrides is not None else LOCATION_PROVINCE_OVERRIDES
+    for loc_norm, province_name in overrides.items():
         province_row = lookup.get(norm(province_name))
         if province_row is None:
             continue
@@ -83,6 +84,7 @@ def parse_args():
     ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_categories_admin.gpkg")
     ap.add_argument("--output-layer", type=str, default="sentences_with_categories_admin")
     ap.add_argument("--output-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
+    ap.add_argument("--location-province-overrides", type=str, default="")
     return ap.parse_args()
 
 
@@ -127,6 +129,9 @@ def main():
     args = parse_args()
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
+    location_province_overrides = load_location_province_overrides(
+        Path(args.location_province_overrides) if args.location_province_overrides else None
+    )
 
     text_gdf = gpd.read_file(args.input_gpkg, layer=args.input_layer)
     muni = gpd.read_file(args.municipality_gpkg)
@@ -176,6 +181,7 @@ def main():
         prov_gdf=prov,
         prov_name_col=prov_name_col,
         prov_code_col=prov_code_col,
+        location_province_overrides=location_province_overrides,
     )
     print("Added province columns")
 

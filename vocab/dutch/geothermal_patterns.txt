@@ -1,0 +1,3 @@
+# Regex patterns used during preprocessing geo-hit counting/filtering.
+aardwarmte\w*
+geotherm\w*

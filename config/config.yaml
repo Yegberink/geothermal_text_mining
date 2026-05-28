@@ -1,66 +1,11 @@
 python: python
-language: dutch
-country: Netherlands
+language: italian
+country: Italy
 make_annotation_df: true
 
 annotation:
   province_filter_regex: Zuid-Holland|Limburg
   exclude_neutral: true
-
-preprocessing:
-  date_locale:
-    month_translations:
-      januari: January
-      februari: February
-      maart: March
-      april: April
-      mei: May
-      juni: June
-      juli: July
-      augustus: August
-      september: September
-      oktober: October
-      november: November
-      december: December
-      gennaio: January
-      febbraio: February
-      marzo: March
-      aprile: April
-      maggio: May
-      giugno: June
-      luglio: July
-      agosto: August
-      settembre: September
-      ottobre: October
-      novembre: November
-      dicembre: December
-    weekday_names:
-      - maandag
-      - dinsdag
-      - woensdag
-      - donderdag
-      - vrijdag
-      - zaterdag
-      - zondag
-      - lunedì
-      - lunedi
-      - martedì
-      - martedi
-      - mercoledì
-      - mercoledi
-      - giovedì
-      - giovedi
-      - venerdì
-      - venerdi
-      - sabato
-      - domenica
-      - monday
-      - tuesday
-      - wednesday
-      - thursday
-      - friday
-      - saturday
-      - sunday
 
 ollama:
   url: http://localhost:11434/api/generate
@@ -91,6 +36,7 @@ online_geocoding:
 paths:
   input_rtf_dir: input_data
   newspaper_regions_csv: data/newspaper_region_mapping.csv
+  preprocess_rtf_chunks_dir: cache/preprocess_rtf_chunks
   municipality_gpkg: data/admin_areas_municipalities_2025.gpkg
   province_gpkg: data/admin_areas_provinces_2025.gpkg
   district_gpkg: data/statistical_areas_districts_2025.gpkg

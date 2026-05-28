@@ -1,0 +1,5 @@
+# Regex patterns used during preprocessing geo-hit counting/filtering.
+geotherm\w*
+erdwärme\w*
+erdwaerme\w*
+tiefengeotherm\w*

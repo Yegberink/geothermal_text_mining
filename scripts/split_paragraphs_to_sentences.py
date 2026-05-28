@@ -89,6 +89,15 @@ def main() -> None:
     if args.uid_col not in df.columns:
         raise ValueError(f"Expected uid column '{args.uid_col}' in input CSV.")
 
+    required_geo_cols = {"geom_point_wkt", "geom_poly_wkt"}
+    missing_geo_cols = required_geo_cols - set(df.columns)
+    if missing_geo_cols:
+        raise ValueError(f"Expected geometry columns in input CSV: {sorted(missing_geo_cols)}")
+
+    input_paragraphs = len(df)
+    has_geo = df["geom_point_wkt"].notna() | df["geom_poly_wkt"].notna()
+    df = df.loc[has_geo].copy()
+
     nlp = build_segmenter(args.language)
     rows: list[dict] = []
 
@@ -111,6 +120,8 @@ def main() -> None:
     out = pd.DataFrame(rows)
     out.to_csv(output_csv, index=False, encoding="utf-8")
     print(f"Wrote: {output_csv} (rows={len(out)})")
+    print(f"[workflow_table] paragraphs_before_sentence_geo_filter: {input_paragraphs}")
+    print(f"[workflow_table] paragraphs_dropped_before_sentence_split_no_geo: {input_paragraphs - len(df)}")
     print(f"[workflow_table] paragraphs_split_to_sentences: {len(df)}")
     print(f"[workflow_table] sentences_after_split: {len(out)}")
 

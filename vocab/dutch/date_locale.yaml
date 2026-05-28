@@ -1,0 +1,21 @@
+month_translations:
+  januari: January
+  februari: February
+  maart: March
+  april: April
+  mei: May
+  juni: June
+  juli: July
+  augustus: August
+  september: September
+  oktober: October
+  november: November
+  december: December
+weekday_names:
+  - maandag
+  - dinsdag
+  - woensdag
+  - donderdag
+  - vrijdag
+  - zaterdag
+  - zondag

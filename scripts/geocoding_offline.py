@@ -9,6 +9,8 @@ import pandas as pd
 from shapely.geometry import Point
 from shapely.ops import unary_union
 
+from language_resources import country_aliases
+
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 USE_WOONPLAATS_FALLBACK = True
 USE_ALIAS_MAP = True
@@ -32,13 +34,6 @@ ALIAS_MAP = {
     "zuidplaspolder": ("municipality", "Zuidplas"),
 }
 
-NETHERLANDS_COUNTRY_NAMES = {
-    "nederland",
-    "netherlands",
-    "the netherlands",
-    "holland",
-}
-
 EXTERNAL_LOCATION_POINTS = {
     "kenia": ("Kenya", -0.0236, 37.9062),
     "kenya": ("Kenya", -0.0236, 37.9062),
@@ -58,6 +53,7 @@ def parse_args():
     ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
     ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_geo_offline.gpkg")
     ap.add_argument("--output-csv", type=str, default="output/text/sentence_offline_geocoding.csv")
+    ap.add_argument("--country", type=str, default="Netherlands")
     ap.add_argument("--points-layer", type=str, default="sentences_points")
     ap.add_argument("--polygons-layer", type=str, default="sentences_polygons")
     return ap.parse_args()
@@ -81,7 +77,8 @@ def clean_loc(s: str) -> str:
         return ""
     s = str(s).strip()
     s = re.sub(
-        r"^\s*(gemeente|provincie|stad|regio|comune|provincia|citta metropolitana|citt[aà])\s+",
+        r"^\s*(gemeente|provincie|stad|regio|comune|provincia|citta metropolitana|citt[aà]|"
+        r"gemeinde|landkreis|kreis|stadt|bundesland|region)\s+",
         "",
         s,
         flags=re.IGNORECASE,
@@ -109,12 +106,17 @@ def pick_col_by_regex(cols, patterns):
     return None
 
 
+def projected_crs_for(gdf: gpd.GeoDataFrame):
+    try:
+        return gdf.estimate_utm_crs()
+    except Exception:
+        return "EPSG:3857"
+
+
 def with_wgs84_centroids(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     gdf = gdf.copy()
-    try:
-        proj = gdf.to_crs("EPSG:28992")
-    except Exception:
-        proj = gdf.to_crs("EPSG:3857")
+    proj_crs = projected_crs_for(gdf)
+    proj = gdf.to_crs(proj_crs)
     proj["_centroid_proj"] = proj.geometry.centroid
 
     wgs = gdf.to_crs("EPSG:4326")
@@ -155,8 +157,10 @@ def join_admin(df_in, mask, join_key_col, map_gdf, name_col, level_label):
     if got.any():
         idxs = j.loc[got, "__ix"].astype(int).values
         geoms = j.loc[got, "geometry"].values
-        centroids = gpd.GeoSeries(geoms, crs="EPSG:4326").to_crs("EPSG:28992").centroid
-        centroids = gpd.GeoSeries(centroids, crs="EPSG:28992").to_crs("EPSG:4326")
+        geom_series = gpd.GeoSeries(geoms, crs="EPSG:4326")
+        proj_crs = projected_crs_for(gpd.GeoDataFrame(geometry=geom_series, crs="EPSG:4326"))
+        centroids = geom_series.to_crs(proj_crs).centroid
+        centroids = gpd.GeoSeries(centroids, crs=proj_crs).to_crs("EPSG:4326")
 
         df_in.loc[idxs, "geo_level"] = level_label
         df_in.loc[idxs, "geo_name_matched"] = j.loc[got, name_col].astype(str).values
@@ -215,14 +219,15 @@ def main():
     muni_wgs84 = with_wgs84_centroids(muni_gdf)
     prov_wgs84 = with_wgs84_centroids(prov_gdf)
 
-    nl_poly = unary_union(prov_gdf.geometry.values)
-    nl_poly_wgs84 = gpd.GeoSeries([nl_poly], crs=prov_gdf.crs).to_crs("EPSG:4326").iloc[0]
-    try:
-        nl_proj = gpd.GeoSeries([nl_poly], crs=prov_gdf.crs).to_crs("EPSG:28992").iloc[0]
-        nl_centroid_wgs84 = gpd.GeoSeries([nl_proj.centroid], crs="EPSG:28992").to_crs("EPSG:4326").iloc[0]
-    except Exception:
-        nl_proj = gpd.GeoSeries([nl_poly], crs=prov_gdf.crs).to_crs("EPSG:3857").iloc[0]
-        nl_centroid_wgs84 = gpd.GeoSeries([nl_proj.centroid], crs="EPSG:3857").to_crs("EPSG:4326").iloc[0]
+    country_poly = unary_union(prov_gdf.geometry.values)
+    country_poly_wgs84 = gpd.GeoSeries([country_poly], crs=prov_gdf.crs).to_crs("EPSG:4326").iloc[0]
+    country_proj_crs = projected_crs_for(prov_gdf)
+    country_proj = gpd.GeoSeries([country_poly], crs=prov_gdf.crs).to_crs(country_proj_crs).iloc[0]
+    country_centroid_wgs84 = gpd.GeoSeries(
+        [country_proj.centroid],
+        crs=country_proj_crs,
+    ).to_crs("EPSG:4326").iloc[0]
+    country_name_aliases = {norm(name) for name in country_aliases(args.country)}
 
     df = pd.read_csv(args.input_csv)
     df = df.loc[:, ~df.columns.duplicated()].copy()
@@ -270,16 +275,19 @@ def main():
     df = join_admin(df, df["_gran"].eq("municipality"), "_join_key", muni_wgs84, muni_name_col, "municipality")
     df = join_admin(df, df["_gran"].eq("province"), "_join_key", prov_wgs84, prov_name_col, "province")
 
-    country_key = df["_gran"].eq("country") & df["_loc_norm"].isin(NETHERLANDS_COUNTRY_NAMES)
+    country_key = df["_gran"].eq("country") & df["_loc_norm"].isin(country_name_aliases)
     if country_key.any():
         df.loc[country_key, "geo_level"] = "country"
         df.loc[country_key, "geo_name_matched"] = df.loc[country_key, "_loc_first"].replace("", "country")
-        df.loc[country_key, "geo_source"] = "cbs_gpkg_union_provinces"
+        df.loc[country_key, "geo_source"] = "admin_gpkg_union_provinces"
         df.loc[country_key, "geo_match_type"] = "union"
-        df.loc[country_key, "geo_lat"] = float(nl_centroid_wgs84.y)
-        df.loc[country_key, "geo_lon"] = float(nl_centroid_wgs84.x)
-        df.loc[country_key, "geom_poly_wkt"] = nl_poly_wgs84.wkt
-        df.loc[country_key, "geom_point_wkt"] = Point(float(nl_centroid_wgs84.x), float(nl_centroid_wgs84.y)).wkt
+        df.loc[country_key, "geo_lat"] = float(country_centroid_wgs84.y)
+        df.loc[country_key, "geo_lon"] = float(country_centroid_wgs84.x)
+        df.loc[country_key, "geom_poly_wkt"] = country_poly_wgs84.wkt
+        df.loc[country_key, "geom_point_wkt"] = Point(
+            float(country_centroid_wgs84.x),
+            float(country_centroid_wgs84.y),
+        ).wkt
 
     if USE_WOONPLAATS_FALLBACK:
         try:
@@ -313,8 +321,10 @@ def main():
                     )
                     tmp = tmp.dropna(subset=["geometry"]).drop_duplicates(subset="__ix", keep="first")
                     if not tmp.empty:
-                        wp_cent = gpd.GeoSeries(tmp["geometry"], crs="EPSG:4326").to_crs("EPSG:28992").centroid
-                        wp_cent = gpd.GeoSeries(wp_cent, crs="EPSG:28992").to_crs("EPSG:4326")
+                        wp_series = gpd.GeoSeries(tmp["geometry"], crs="EPSG:4326")
+                        wp_proj_crs = projected_crs_for(gpd.GeoDataFrame(geometry=wp_series, crs="EPSG:4326"))
+                        wp_cent = wp_series.to_crs(wp_proj_crs).centroid
+                        wp_cent = gpd.GeoSeries(wp_cent, crs=wp_proj_crs).to_crs("EPSG:4326")
                         pts = gpd.GeoDataFrame(tmp[["__ix"]].copy(), geometry=wp_cent, crs="EPSG:4326")
                         try:
                             joined = gpd.sjoin(pts, muni_wgs84[["geometry"]].copy(), predicate="within", how="left")

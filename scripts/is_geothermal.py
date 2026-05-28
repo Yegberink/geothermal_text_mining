@@ -25,6 +25,7 @@ SYSTEM = (
 )
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+ROW_UID_COL = "_row_uid"
 
 
 def _fingerprint(text: str, region: str, country: str) -> str:
@@ -46,6 +47,27 @@ def make_uid(row: Dict[str, object]) -> str:
         str(row.get("paragraph_text", "")),
     ])
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def set_unique_row_index(df: pd.DataFrame, uid_col: str = "uid") -> pd.DataFrame:
+    """Keep content uid as data, but use a unique key for pandas alignment."""
+    out = df.copy()
+    if uid_col not in out.columns:
+        if out.index.name == uid_col:
+            out[uid_col] = out.index
+        else:
+            out[uid_col] = out.apply(lambda r: make_uid(r.to_dict()), axis=1)
+    if out.index.name == uid_col:
+        out = out.reset_index(drop=True)
+
+    out[uid_col] = out[uid_col].astype(str)
+    duplicate_mask = out[uid_col].duplicated(keep=False)
+    occurrence = out.groupby(uid_col, sort=False).cumcount().astype(str)
+    out[ROW_UID_COL] = out[uid_col]
+    out.loc[duplicate_mask, ROW_UID_COL] = (
+        out.loc[duplicate_mask, uid_col] + "__dup" + occurrence.loc[duplicate_mask]
+    )
+    return out.set_index(ROW_UID_COL, drop=True)
 
 
 @retry(
@@ -145,7 +167,7 @@ def write_partial_csv(out: pd.DataFrame, partial_csv_path: Optional[Path]) -> No
         return
     partial_csv_path.parent.mkdir(parents=True, exist_ok=True)
     partial_out = out.copy()
-    partial_out["uid"] = partial_out.index
+    partial_out[ROW_UID_COL] = partial_out.index
     partial_out.to_csv(partial_csv_path, index=False, encoding="utf-8")
 
 
@@ -153,6 +175,24 @@ def incomplete_count(out: pd.DataFrame) -> int:
     if "llm_status" not in out.columns:
         return len(out)
     return int((~out["llm_status"].isin(["ok", "empty"])).sum())
+
+
+def restart_error_rows(out: pd.DataFrame) -> int:
+    if "llm_status" not in out.columns:
+        return 0
+    error_mask = out["llm_status"].eq("error")
+    restarted = int(error_mask.sum())
+    if restarted:
+        reset_values = {
+            "llm_is_geothermal": None,
+            "llm_geo_confidence": 0.0,
+            "llm_geo_evidence_short": None,
+            "llm_status": None,
+            "llm_error": None,
+        }
+        for col, value in reset_values.items():
+            out.loc[error_mask, col] = value
+    return restarted
 
 
 def write_final_csv_atomic(out: pd.DataFrame, out_csv: Path) -> None:
@@ -179,14 +219,15 @@ def batch_geothermal_resumable(
         out = pd.read_parquet(checkpoint_path)
 
         # Defensive handling for older or differently written checkpoints.
-        if "uid" in out.columns and out.index.name != "uid":
-            out = out.set_index("uid", drop=True)
+        out = set_unique_row_index(out)
 
         out = out.reindex(df.index)
 
         for c in df.columns:
-            if c not in out.columns:
-                out[c] = df[c]
+            out[c] = df[c]
+        restarted = restart_error_rows(out)
+        if restarted:
+            print(f"[resume] Restarting {restarted} geothermal classification rows that previously errored.")
     else:
         out = df.copy()
         out["llm_is_geothermal"] = None
@@ -323,9 +364,8 @@ def main():
     if "uid" not in df.columns:
         df["uid"] = df.apply(lambda r: make_uid(r.to_dict()), axis=1)
 
-    # Important fix:
-    # keep uid only as index, not both index and column.
-    df = df.set_index("uid", drop=True)
+    # Keep uid as the content identifier, but align checkpoints on a unique row key.
+    df = set_unique_row_index(df)
 
     df["word_count"] = df[args.text_col].apply(lambda x: len(str(x).split()))
     input_rows = len(df)
@@ -354,9 +394,8 @@ def main():
 
     out_csv = Path(args.out_csv)
 
-    # Restore uid as a regular column for the final CSV export.
+    # uid remains a regular column in the final CSV; the internal row key stays as index.
     out = out.copy()
-    out["uid"] = out.index
 
     remaining = incomplete_count(out)
     if remaining:
