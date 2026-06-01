@@ -5,8 +5,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import yaml
 
+
+KEYWORD_CSV_SEPARATOR = ";"
 
 LANGUAGE_DIR_ALIASES = {
     "dutch": "dutch",
@@ -187,6 +190,18 @@ def load_geothermal_patterns(project_dir: Path, language: str | None) -> list[st
             if line.strip() and not line.strip().startswith("#")
         )
     return list(dict.fromkeys(patterns))
+
+
+def read_csv_with_encoding_fallback(path: Path, **kwargs: object) -> pd.DataFrame:
+    try:
+        return pd.read_csv(path, **kwargs)
+    except UnicodeDecodeError:
+        return pd.read_csv(path, encoding="cp1252", **kwargs)
+
+
+def load_keyword_csv(path: Path) -> pd.DataFrame:
+    df = read_csv_with_encoding_fallback(path, sep=KEYWORD_CSV_SEPARATOR)
+    return df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
 
 
 def load_location_province_overrides(path: Path | None) -> dict[str, str]:

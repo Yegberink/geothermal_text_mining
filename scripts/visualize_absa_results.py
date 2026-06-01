@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import plotly.graph_objects as go
 
-from language_resources import country_aliases, load_location_province_overrides
+from language_resources import country_aliases, load_keyword_csv, load_location_province_overrides
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
@@ -24,6 +24,7 @@ SENTIMENT_COLORS = {
     "neutral": "#999999",
     "positive": "#009E73",
 }
+DESCRIPTIVE_BLUE = "#3f6f8f"
 MIN_PROVINCE_SENTENCES = 31
 LOCATION_PROVINCE_OVERRIDES = {}
 
@@ -132,8 +133,7 @@ def is_country_location(df: pd.DataFrame, country: str) -> pd.Series:
 
 
 def load_frame_keyword_vocab(path: Path) -> tuple[list[str], dict[str, set[str]], dict[str, dict[str, str]]]:
-    vocab_df = pd.read_csv(path)
-    vocab_df = vocab_df.loc[:, ~vocab_df.columns.astype(str).str.match(r"^Unnamed")]
+    vocab_df = load_keyword_csv(path)
 
     frame_order: list[str] = []
     frame_keywords: dict[str, set[str]] = {}
@@ -267,7 +267,6 @@ def plot_province_sentiment_balance(province_tbl: pd.DataFrame, out_path: Path) 
 
     ax.axvline(0, color="black", linewidth=0.8)
     ax.set_xlabel("Percentage of sentences; diamond = positive - negative")
-    ax.set_title("Sentiment per province", pad=36)
 
     for spine in ax.spines.values():
         spine.set_visible(True)
@@ -386,6 +385,9 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
     all_label = f"All {unit_label}"
     plot_data.loc[all_label] = overall_percent
     plot_data = plot_data.loc[[all_label] + [idx for idx in plot_data.index if idx != all_label]]
+    plot_totals = sentiment_counts["total"].copy()
+    plot_totals.loc[all_label] = overall_counts.sum()
+    plot_totals = plot_totals.loc[plot_data.index]
 
     configure_plot_style()
     fig, ax = plt.subplots(figsize=(10, 6.4), dpi=300)
@@ -406,6 +408,20 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
     ax.set_ylabel("Percentage of sentences")
     ax.set_ylim(0, 100)
     ax.margins(y=0)
+    for idx, total in enumerate(plot_totals):
+        if pd.notna(total):
+            ax.text(
+                idx,
+                101.5,
+                f"n={int(total)}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="#3a3a3a",
+                rotation=90,
+                clip_on=False,
+            )
+
     for spine in ax.spines.values():
         spine.set_visible(True)
         spine.set_linewidth(0.8)
@@ -422,10 +438,311 @@ def plot_category_sentiment_distribution(categories_df: pd.DataFrame, out_path: 
         bbox_to_anchor=(0.5, 0.98),
     )
 
-    fig.tight_layout(rect=(0, 0, 1, 0.9))
+    fig.tight_layout(rect=(0, 0, 1, 0.86))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, bbox_inches="tight", pad_inches=0.12)
     plt.close(fig)
+
+
+def build_region_frame_counts(
+    admin_df: pd.DataFrame,
+    province_tbl: pd.DataFrame,
+) -> pd.DataFrame:
+    required = ["province_name", "matched_categories_str"]
+    missing = [c for c in required if c not in admin_df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns for province-frame plots: {missing}")
+
+    eligible_provinces = set(
+        province_tbl.loc[
+            province_tbl["province_name"].astype(str).ne("All sentences"),
+            "province_name",
+        ]
+        .dropna()
+        .astype(str)
+        .str.strip()
+    )
+
+    df = admin_df[required].copy().dropna(subset=required)
+    df["province_name"] = df["province_name"].astype(str).str.strip()
+    df = df[df["province_name"].isin(eligible_provinces)]
+    df["frame"] = df["matched_categories_str"].apply(parse_semicolon_values)
+    df = df.explode("frame")
+    df["frame"] = df["frame"].astype(str).str.strip()
+    df = df[df["frame"].ne("")]
+
+    if df.empty:
+        return pd.DataFrame(columns=["province_name", "frame", "n_mentions"])
+
+    return (
+        df.groupby(["province_name", "frame"])
+        .size()
+        .rename("n_mentions")
+        .reset_index()
+        .sort_values(["province_name", "n_mentions", "frame"], ascending=[True, False, True])
+    )
+
+
+def eligible_province_summary(province_tbl: pd.DataFrame) -> pd.DataFrame:
+    return province_tbl[
+        province_tbl["province_name"].notna()
+        & province_tbl["province_name"].astype(str).str.strip().ne("")
+        & province_tbl["province_name"].astype(str).ne("All sentences")
+    ].copy()
+
+
+def plot_single_region_frame_counts(region_counts: pd.DataFrame, province_name: str, out_path: Path) -> None:
+    plot_df = region_counts.sort_values(["n_mentions", "frame"], ascending=[True, True])
+
+    configure_plot_style()
+    fig_height = max(4.2, 0.55 * len(plot_df) + 1.6)
+    fig, ax = plt.subplots(figsize=(8, fig_height), dpi=300)
+
+    ax.barh(
+        plot_df["frame"],
+        plot_df["n_mentions"],
+        color=DESCRIPTIVE_BLUE,
+        edgecolor="white",
+        linewidth=0.8,
+    )
+    ax.set_xlabel("Number of frame mentions")
+    ax.set_ylabel("")
+    ax.grid(False)
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(0.8)
+        spine.set_color("black")
+
+    xmax = plot_df["n_mentions"].max()
+    ax.set_xlim(0, xmax * 1.12 if xmax else 1)
+    for frame, value in zip(plot_df["frame"], plot_df["n_mentions"], strict=False):
+        ax.text(value + xmax * 0.015, frame, f"{int(value)}", va="center", ha="left", fontsize=9)
+
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_region_sentiment_extreme_frame_comparison(
+    region_counts: pd.DataFrame,
+    province_summary: pd.DataFrame,
+    frame_order: list[str],
+    out_path: Path,
+) -> None:
+    province_names = most_negative_positive_provinces(province_summary)
+    if not province_names:
+        return
+
+    compare = build_extreme_province_frame_matrix(region_counts, province_names, frame_order)
+    if compare.empty:
+        return
+
+    compare["total"] = compare.sum(axis=1)
+    compare = compare.sort_values(["total"], ascending=True)
+    compare = compare.drop(columns="total")
+
+    configure_plot_style()
+    fig_height = max(4.4, 0.58 * len(compare) + 1.8)
+    fig, ax = plt.subplots(figsize=(9, fig_height), dpi=300)
+    y_positions = range(len(compare))
+    bar_height = 0.38
+
+    ax.barh(
+        [y - bar_height / 2 for y in y_positions],
+        compare[province_names[0]],
+        height=bar_height,
+        label=f"{province_names[0]} (most negative)",
+        color=SENTIMENT_COLORS["negative"],
+        edgecolor="white",
+        linewidth=0.8,
+    )
+    ax.barh(
+        [y + bar_height / 2 for y in y_positions],
+        compare[province_names[1]],
+        height=bar_height,
+        label=f"{province_names[1]} (most positive)",
+        color=SENTIMENT_COLORS["positive"],
+        edgecolor="white",
+        linewidth=0.8,
+    )
+
+    ax.set_yticks(list(y_positions))
+    ax.set_yticklabels(compare.index)
+    ax.set_xlabel("Number of frame mentions")
+    ax.set_ylabel("")
+    ax.grid(False)
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(0.8)
+        spine.set_color("black")
+
+    xmax = float(compare.max().max())
+    ax.set_xlim(0, xmax * 1.18 if xmax else 1)
+    offset = xmax * 0.015 if xmax else 0.02
+    for idx, (_, row) in enumerate(compare.iterrows()):
+        for y_pos, province_name in [
+            (idx - bar_height / 2, province_names[0]),
+            (idx + bar_height / 2, province_names[1]),
+        ]:
+            value = row[province_name]
+            ax.text(value + offset, y_pos, f"{int(value)}", va="center", ha="left", fontsize=9)
+
+    ax.legend(frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=1)
+    plt.tight_layout(rect=(0, 0, 1, 0.95))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def most_negative_positive_provinces(province_summary: pd.DataFrame) -> list[str]:
+    if province_summary.empty or province_summary["province_name"].nunique() < 2:
+        return []
+
+    negative_region = province_summary.sort_values(
+        ["polarity_balance", "n_text_units", "province_name"],
+        ascending=[True, False, True],
+    ).iloc[0]
+    positive_candidates = province_summary[
+        province_summary["province_name"].astype(str).ne(str(negative_region["province_name"]))
+    ]
+    if positive_candidates.empty:
+        return []
+
+    positive_region = positive_candidates.sort_values(
+        ["polarity_balance", "n_text_units", "province_name"],
+        ascending=[False, False, True],
+    ).iloc[0]
+    return [str(negative_region["province_name"]), str(positive_region["province_name"])]
+
+
+def build_extreme_province_frame_matrix(
+    region_counts: pd.DataFrame,
+    province_names: list[str],
+    frame_order: list[str],
+) -> pd.DataFrame:
+    if region_counts.empty or len(province_names) != 2:
+        return pd.DataFrame()
+
+    compare = (
+        region_counts[region_counts["province_name"].isin(province_names)]
+        .pivot_table(index="frame", columns="province_name", values="n_mentions", aggfunc="sum", fill_value=0)
+    )
+    compare = compare.reindex(columns=province_names, fill_value=0)
+    ordered_frames = [frame for frame in frame_order if frame in compare.index]
+    extra_frames = [frame for frame in compare.index if frame not in ordered_frames]
+    return compare.loc[ordered_frames + sorted(extra_frames)]
+
+
+def plot_region_sentiment_extreme_frame_relative_importance(
+    region_counts: pd.DataFrame,
+    province_summary: pd.DataFrame,
+    frame_order: list[str],
+    out_path: Path,
+) -> None:
+    province_names = most_negative_positive_provinces(province_summary)
+    if not province_names:
+        return
+
+    compare = build_extreme_province_frame_matrix(region_counts, province_names, frame_order)
+    if compare.empty:
+        return
+
+    denom = compare.sum(axis=0).replace({0: pd.NA})
+    plot_data = (compare.div(denom, axis=1) * 100).fillna(0)
+    plot_data["total"] = plot_data.sum(axis=1)
+    plot_data = plot_data.sort_values(["total"], ascending=True)
+    plot_data = plot_data.drop(columns="total")
+    if plot_data.empty:
+        return
+
+    configure_plot_style()
+    fig_height = max(4.4, 0.58 * len(plot_data) + 1.8)
+    fig, ax = plt.subplots(figsize=(9, fig_height), dpi=300)
+    y_positions = range(len(plot_data))
+    bar_height = 0.38
+
+    ax.barh(
+        [y - bar_height / 2 for y in y_positions],
+        plot_data[province_names[0]],
+        height=bar_height,
+        label=f"{province_names[0]} (most negative)",
+        color=SENTIMENT_COLORS["negative"],
+        edgecolor="white",
+        linewidth=0.8,
+    )
+    ax.barh(
+        [y + bar_height / 2 for y in y_positions],
+        plot_data[province_names[1]],
+        height=bar_height,
+        label=f"{province_names[1]} (most positive)",
+        color=SENTIMENT_COLORS["positive"],
+        edgecolor="white",
+        linewidth=0.8,
+    )
+
+    ax.set_yticks(list(y_positions))
+    ax.set_yticklabels(plot_data.index)
+    ax.set_xlabel("Share of frame mentions within province")
+    ax.set_ylabel("")
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:.0f}%"))
+    ax.grid(False)
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(0.8)
+        spine.set_color("black")
+
+    xmax = float(plot_data.max().max())
+    ax.set_xlim(0, xmax * 1.2 if xmax else 1)
+    offset = xmax * 0.015 if xmax else 0.02
+    for idx, (_, row) in enumerate(plot_data.iterrows()):
+        for y_pos, province_name in [
+            (idx - bar_height / 2, province_names[0]),
+            (idx + bar_height / 2, province_names[1]),
+        ]:
+            value = row[province_name]
+            if pd.notna(value):
+                ax.text(value + offset, y_pos, f"{value:.1f}%", va="center", ha="left", fontsize=9)
+
+    ax.legend(frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=1)
+    plt.tight_layout(rect=(0, 0, 1, 0.95))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_region_frame_figures(
+    admin_df: pd.DataFrame,
+    province_tbl: pd.DataFrame,
+    frame_order: list[str],
+    out_dir: Path,
+) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    region_summary = eligible_province_summary(province_tbl)
+    region_counts = build_region_frame_counts(admin_df, province_tbl)
+
+    region_counts.to_csv(out_dir / "province_frame_counts.csv", index=False)
+    region_summary.to_csv(out_dir / "province_sentiment_summary.csv", index=False)
+
+    for region_name, region_df in region_counts.groupby("province_name", sort=True):
+        plot_single_region_frame_counts(
+            region_df,
+            str(region_name),
+            out_dir / f"{slugify(str(region_name))}_frames.png",
+        )
+
+    plot_region_sentiment_extreme_frame_comparison(
+        region_counts,
+        region_summary,
+        frame_order,
+        out_dir / "most_negative_vs_most_positive_province_frames.png",
+    )
+    plot_region_sentiment_extreme_frame_relative_importance(
+        region_counts,
+        region_summary,
+        frame_order,
+        out_dir / "most_negative_vs_most_positive_province_frame_shares.png",
+    )
 
 
 def build_frame_keyword_sentiment_data(
@@ -877,6 +1194,7 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     frame_keywords_dir = output_dir / "frame_keywords"
+    region_frames_dir = output_dir / "region_frames"
 
     province_tbl = build_province_summary(admin_df, args.country, location_province_overrides)
     province_tbl.to_csv(output_dir / "province_sentiment_table.csv", index=False)
@@ -892,6 +1210,12 @@ def main() -> None:
     plot_category_sentiment_distribution(
         categories_df,
         output_dir / "categories_sentiment_distribution.png",
+    )
+    plot_region_frame_figures(
+        admin_df,
+        province_tbl,
+        frame_order,
+        region_frames_dir,
     )
     plot_locations_interactive(
         admin_df,
@@ -915,6 +1239,7 @@ def main() -> None:
     print("Wrote:", output_dir / "categories_sentiment_distribution.png")
     print("Wrote:", output_dir / "locations_map.html")
     print("Wrote:", frame_keywords_dir)
+    print("Wrote:", region_frames_dir)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 from shapely import wkt
+from language_resources import load_keyword_csv
 
 try:
     import geopandas as gpd
@@ -116,10 +117,7 @@ def main():
     input_rows = len(text_gdf)
     workflow_stage = "sentence_categories" if args.output_gpkg else "sentence_frames"
 
-    keyword_categories = pd.read_csv(args.keywords_csv)
-    keyword_categories = keyword_categories.loc[
-        :, ~keyword_categories.columns.astype(str).str.match(r"^Unnamed")
-    ]
+    keyword_categories = load_keyword_csv(Path(args.keywords_csv))
 
     all_keywords = keyword_categories.stack().dropna().str.strip()
     duplicates = all_keywords[all_keywords.duplicated()]

@@ -1,79 +1,82 @@
-Technological readiness,Comparing locations,Risks,Support,Governance,Knowledge availability,Sustainability,Costs
-progetto pilota,progetto di riferimento,rischio,consenso,permesso,dati geologici,energia sostenibile,costi
-pilota,comune pilota,rischio per la sicurezza,accettazione pubblica,iter autorizzativo,dati del sottosuolo,energia rinnovabile,investimento
-fase pilota,impianto di riferimento,rischio sismico,sostegno,normativa,dati del suolo,riduzione della CO2,investimento di capitale
-impianto dimostrativo,esempio pratico,terremoto,sostegno locale,politica,ricerca geologica,riduzione delle emissioni,costi operativi
-progetto dimostrativo,caso di studio,terremoti,preoccupazione,processo decisionale,indagine sismica,neutralita climatica,finanziamento del progetto
-prototipo,caso di studio internazionale,vibrazioni,protesta,valutazione di impatto ambientale,modello del sottosuolo,eliminazione dei combustibili fossili,sussidio
-impianto prototipale,progetti esteri,attivita sismica,resistenza,piano regolatore,dati geofisici,energia pulita,budget
-pozzo esplorativo,esperienza estera,sismicita indotta,sfiducia,domanda di permesso,caratterizzazione del suolo,energia verde,stima dei costi
-pozzo di prova,benchmark,danni agli edifici,scetticismo,decisione governativa,carote geologiche,calore sostenibile,business case
-fase di prova,benchmark prestazionale,formazione di crepe,fiducia,procedura di partecipazione,dati di misurazione,CO2 neutrale,analisi costi-benefici
-fase sperimentale,confronto prestazionale,cedimenti,accettazione del progetto,valutazione giuridica,mappe del sottosuolo,senza emissioni,tempo di ritorno
-prova di concetto,regione esempio,subsidenza,coinvolgimento locale,quadro politico,analisi del serbatoio,rispettoso del clima,finanziario
-validazione del concetto,regione di riferimento,rischio di perforazione,accettazione sociale,procedura,lacuna di dati del sottosuolo,beneficio ambientale,redditivita
-validazione pratica,regione comparabile,pozzo secco,sostegno dei residenti,procedura di consultazione,incertezza geologica,decarbonizzazione,finanziamento
-test sul campo,benchmark di progetto,incertezza sulla temperatura,sostegno al progetto,approvazione,esplorazione del sottosuolo,obiettivi climatici,costi operativi
-test pratico,caso di riferimento,incertezza,coinvolgimento pubblico,quadro normativo,dati sismici,calore rinnovabile,costi di progetto
-test tecnologico,esperienza di progetto,perforazione fallita,incertezza nel quartiere,autorizzazione del progetto,interpretazione geologica,guadagno ecologico,sforamento del budget
-test di sistema,esperienza internazionale,resa deludente,preoccupazioni locali,procedura di valutazione,ricerca del sottosuolo,calore pulito,sforamento dei costi
-applicazione sperimentale,benchmarking di progetto,guasto,agitazione,durata del processo,indagine geofisica,fonte sostenibile,redditivita economica
-esperimento,area di riferimento,incidente,controversia,decisione,dati del serbatoio,energia continua,fattibilita finanziaria
-sperimentale,confronto tra progetti,problema,preoccupazione dei residenti,pianificazione,conoscenza geologica,sempre disponibile,budget di progetto
-progetto di innovazione,caso pratico,rischio tecnico,discussione locale,fase decisionale,parametri del sottosuolo,sicurezza dell'approvvigionamento,costi di investimento
-programma di innovazione,caso di riferimento,rischio di progetto,azione di protesta,allineamento politico,set di dati geofisici,fonte rinnovabile,budget operativo
-campo sperimentale,progetto benchmark,risultati di progetto,comitato di azione,procedura di progetto,analisi geologica,fonte di calore sostenibile,costi aziendali
-living lab,caso prestazionale,fallimento,protesta dei residenti,procedura autorizzativa,ricerca di caratterizzazione del suolo,calore verde,costi di capitale
-configurazione di prova,progetto comparativo,zona di rischio,dibattito pubblico,variante al piano regolatore,modellazione del serbatoio,energia priva di CO2,budget operativo
-test di concetto,impianti di riferimento,pericolo sismico,resistenza locale,decisione di progetto,stima della temperatura,resistente al clima,investimento di progetto
-fase di sviluppo,progetto di successo,magnitudo,resistenza sociale,politica governativa,analisi della portata,fonte di energia pulita,costi di finanziamento
-percorso di sviluppo,risultato benchmark di progetto,misurazioni sismiche,scetticismo dei residenti,decisione politica,test idraulico,fonte di energia sostenibile,investimento operativo
-stadio di sviluppo,dati benchmark di progetto,rete di monitoraggio sismico,preoccupazione dei residenti,normativa energetica,caratterizzazione del serbatoio,energia senza emissioni,fabbisogno di capitale
-esperienza pratica,esempio di riferimento,scosse di assestamento,preoccupazioni dei residenti,concessione del permesso,risultato della perforazione,fonte di energia verde,rendimento del progetto
-esperienza operativa,esempio internazionale,scossa sismica,discussione sociale,costi della procedura di progetto,tasso di successo,soluzione climatica,struttura dei costi
-scalabilita,confronto internazionale tra progetti,vibrazioni sismiche,,processo politico,rendimento della fonte,fonte di calore rinnovabile,analisi dei costi
-espansione di scala,risultati pratici all'estero,attivita di faglia,,approvazione governativa,pressione del serbatoio,fornitura di calore pulito,pianificazione finanziaria
-sviluppo tecnologico,caso di progetto all'estero,accelerazione del suolo,,valutazione ambientale,permeabilita,fornitura di calore sostenibile,analisi dei costi di progetto
-test tecnologico,caso di riferimento all'estero,sismogramma,,verifica ambientale,flusso di calore,energia a basse emissioni di CO2,budget di progetto
-sviluppo del sistema,studio benchmark,cluster sismico,,valutazione degli impatti ambientali,gradiente geotermico,energia climaticamente neutrale,finanze di progetto
-sviluppo del progetto,studio benchmark di progetto,tensione nel sottosuolo,,requisito autorizzativo,riserve naturali di calore,transizione energetica verde,pianificazione dei costi
-processo di innovazione,valutazione del progetto all'estero,dinamica del serbatoio,,processo normativo,stabilita del serbatoio,fornitura energetica sostenibile,struttura di finanziamento
-sviluppo della tecnica,esperienza di progetto all'estero,rischio sismico,,procedura governativa,acqua di formazione,transizione energetica pulita,modello di finanziamento
-impianto pilota,benchmark internazionale,danni da terremoti,,processo decisionale governativo,dinamica del serbatoio,calore CO2 neutrale,analisi del budget di progetto
-versione dimostrativa,benchmark di progetto internazionale,registrazione delle scosse,,approvazione del progetto,misurazione del flusso di calore,energia rispettosa del clima,stima dei costi di progetto
-prova tecnologica,confronto di progetto europeo,intensita sismica,,decisione normativa,dati geotermici,fornitura di calore verde,analisi finanziaria
-implementazione pratica,Islanda,misurazioni sismiche,,normativa geotermica,dati di analisi del serbatoio,soluzione di calore sostenibile,modello di finanziamento del progetto
-impianto di test pratico,Hellisheidi,monitoraggio sismico,,normativa sul calore,permeabilita del sottosuolo,fornitura di calore rinnovabile,strategia di investimento
-impianto di prova,Italia,rete di monitoraggio sismico,,permesso per progetto termico,riserva geologica di calore,fonte di calore pulita,investimenti di progetto
-impianto di test,Larderello,monitoraggio sismico,,processo autorizzativo,serbatoio termico,produzione di calore sostenibile,pianificazione dei costi di progetto
-area sperimentale,Svizzera,misurazione dell'attivita sismica,,decisione amministrativa,flusso di calore permanente,calore climaticamente neutrale,calcolo dei costi
-laboratorio di transizione,San Gallo,analisi sismica,,quadro politico energetico,formazione acquifera,infrastruttura energetica sostenibile,analisi dei costi di progetto
-,Corea del Sud,analisi del rischio sismico,,normativa per progetto energetico,sistema idrotermale,infrastruttura di calore pulito,analisi finanziaria di progetto
-,Pohang,analisi del rischio sismico,,permesso governativo,misurazione della permeabilita del sottosuolo,,struttura del finanziamento di progetto
-,Germania,sensibilita ai terremoti,,permesso per progetto energetico,geologia del progetto,,struttura degli investimenti
-,Munningen,compattazione,,normativa per infrastruttura energetica,conoscenza,,struttura dei costi di progetto
-,Turingia,cedimento,,permesso infrastrutturale,,,economico
-,Staufen im Breisgau,cedimento del terreno,,partecipazione dei cittadini,,,piu economico
-,Boxtel,,,processo di partecipazione,,,costoso
-,Barendrecht,,,serata informativa,,,piu costoso
-,,,,partecipazione,,,
-,,,,comunicazione con i residenti,,,
-,,,,dibattito sociale,,,
-,,,,partecipazione dei residenti,,,
-,,,,dibattito,,,
-,,,,partecipazione dei residenti,,,
-,,,,serata informativa per i residenti,,,
-,,,,consultazione dei residenti,,,
-,,,,riunione locale,,,
-,,,,dialogo con i residenti,,,
-,,,,riunione pubblica,,,
-,,,,incontro pubblico,,,
-,,,,serata di partecipazione,,,
-,,,,consultazione locale,,,
-,,,,dibattito aperto,,,
-,,,,consultazione locale,,,
-,,,,riunione di partecipazione,,,
-,,,,dialogo con i residenti,,,
-,,,,serata informativa locale,,,
-,,,,piani regolatori,,,
-,,,,piano regolatore,,,
+﻿Costs;Sustainability;Permitting & policy;Public acceptance;Technological uncertainty;Infrastructure;Environmental or geological hazards
+costi operativi;sempre disponibile;politica pubblica;accettazione;benchmark;rete di distribuzione;terremoto
+bilancio;CO2 neutro;decisione politica;gruppo di protesta;progetto benchmark;reti di distribuzione;terremoti
+bilanci;a CO2 neutra;quadro normativo;posti di lavoro;dati del sottosuolo;infrastruttura di distribuzione;pericolo sismico
+budget;neutralità CO2;quadri normativi;occupazione locale;risultato di perforazione;rete elettrica;rischio sismico
+budget pluriennali;riduzione CO2;processo politico;protesta dei residenti;risultati di perforazione;reti elettriche;rischi sismici
+business case;senza CO2;intenzione politica;sostegno dei residenti;modello della sorgente;rete energetica;scossa tellurica
+costoso;privo di CO2;indirizzi politici;preoccupazione;studi di caso;reti energetiche;scosse telluriche
+caro;CO2-neutro;delibera;rumore di cantiere;studio di caso;infrastruttura energetica;evento sismico
+più costoso;neutralità-carbonica;processo decisionale;protesta di quartiere;corrosivo;cavo ad alta tensione;eventi sismici
+il più costoso;riduzione-carbonica;piano regolatore;proteste di quartiere;portata;cavi ad alta tensione;pericolo di scosse
+costi di gestione;carbon free;piani regolatori;valori collettivi;progetto dimostrativo;rete ad alta tensione;subsidenza del suolo
+finanziario;carbon-free termico;coinvolgimento istituzionale;comfort domestico;progetti dimostrativi;reti ad alta tensione;incidenti ambientali
+finanziaria;elettricità continua;incontro con i residenti;percezione del comfort;permeabilità;infrastruttura alta tensione;cedimento del terreno
+finanze;energia continua;incontri con i residenti;controversia;esperimento;infrastruttura;cedimenti del terreno
+finanziamento;fonte di energia continua;consultazione dei residenti;sostegno sociale;sperimentale;rete di tubazioni;linea di faglia
+costi di finanziamento;fonti di energia continue;partecipazione dei residenti;carico acustico;fase sperimentale;gestione della rete;linee di faglia
+economico;calore continuo;riunione pubblica;disturbo acustico;esperimenti;gestore di rete;contaminazione delle acque sotterranee
+il più economico;decarbonizzazione;riunioni pubbliche;abitudine;perforazione esplorativa;congestione di rete;inquinamento delle acque sotterranee
+a basso costo;sostenibile;partecipazione civica;abitudini;perforazioni esplorative;servizio pubblico;incidente ambientale
+più economico;più sostenibile;dibattito;fastidio;indagine geologica;servizi pubblici;compattazione del terreno
+ricavi;energia sostenibile;dibattiti;identità locale;analisi geologica;condotta;perdita
+investimento;maggiormente sostenibile;approvazione;stufa;analisi geologiche;condotte;perdite
+investimenti;emissione;serata informativa;reclamo;dati geologici;teleriscaldamento urbano;magnitudo
+costi di investimento;riduzione delle emissioni;consultazione pubblica;reclami;indagini geologiche;calore urbano;inquinamento ambientale
+strategia di investimento;a zero emissioni;procedura di consultazione;commissione reclami;incertezze geologiche;cavo elettrico;scosse di assestamento
+strategie di investimento;senza emissioni nette;legale;cucinare;incertezza geologica;cavi elettrici;contaminazione delle acque superficiali
+investimento di capitale;transizione energetica;giuridica;stile di vita;gradiente geotermico;tubazione del calore;inquinamento delle acque superficiali
+investimenti di capitale;elettricità verde;discussione sociale;stili di vita;conoscenza tecnica;tubazioni del calore;scala Richter
+costi di capitale;energia verde;VIA;disturbo luminoso;dati di misura;rete di calore;sostanze nocive
+costi;fonte di energia verde;valutazione di impatto ambientale;inquinamento luminoso;misurazioni;reti di calore;formazione di crepe
+analisi dei costi;fonti di energia verdi;valutazioni di impatto ambientale;economia locale;ricco di minerali;infrastruttura termica;sismicità
+analisi economiche;tecnologia verde;rapporto di impatto ambientale;rumoroso;perforazione fallita;scambiatore di calore;rischio geologico-sismico
+stima dei costi;calore verde;rapporti di impatto ambientale;rumorosa;dati sotterranei;scambiatori di calore;attività sismica
+stime dei costi;fornitura di calore verde;verifica ambientale;agitazione sociale;indagine del sottosuolo;;rischi geologici-sismici
+investimento di progetto;rinnovabile;verifiche ambientali;disagio;modello sotterraneo;;pericolo di vibrazioni
+investimenti di progetto;energia rinnovabile;permesso di esplorazione;puzzare;fase di sviluppo;;vibrazione
+redditizio;resiliente al clima;permessi di esplorazione;manifestazione;scalabilità operativa;;vibrazioni
+redditizia;obiettivo climatico;politica governativa;azione di protesta;pilota;;sicurezza geologica
+redditività;obiettivi climatici;decisione governativa;azioni di protesta;fase pilota;;rischio per la sicurezza
+rendimento;climaticamente neutro;processo partecipativo;proteste;progetto pilota;;contaminazione
+sussidio;a impatto climatico neutro;serata partecipativa;protestare;perforazione di prova;;inquinamento
+sussidi;neutralità climatica;serate partecipative;scetticismo;perforazioni di prova;;abbassamento del terreno
+tempo di rientro;amico del clima;iter partecipativo;scettico;impianto di prova;;abbassamenti del terreno
+profitto;soluzione amica del clima;pianificazione territoriale;scettica;impianti di prova;;contaminazione dell’acqua
+profitti;beneficio ambientale;procedura;solidarietà;laboratorio sperimentale;;inquinamento dell’acqua
+;elettricità pulita;procedure;odore molesto;benchmark di progetto;;scossa di assestamento
+;energia pulita;regolamentazione;supporto pubblico;prototipo;;sostanza nociva
+;benefici ambientali;dialogo pubblico;polvere molesta;caso di riferimento;;sostanza pericolosa
+;fonte di energia pulita;permesso iniziale;comportamento di riscaldamento;misura tecnica;;sostanze pericolose
+;fonti energetiche pulite;autorizzazione;tradizione;referenza di caso;;acqua potabile
+;calore pulito;domanda di autorizzazione;tradizioni;casi di riferimento;;contaminazione dell’acqua potabile
+;fornitura di calore pulito;domande di autorizzazione;traffico aggiuntivo;analisi del reservoir;;inquinamento dell’acqua potabile
+;sicurezza dell’approvvigionamento;autorizzazioni;fiducia;dati del reservoir;;
+;CO2-neutrale;requisito autorizzativo;preferenza di riscaldamento;pressione del reservoir;;
+;fornitura continua di calore;procedura autorizzativa;sfiducia;modello di reservoir;;
+;clima;procedure autorizzative;opposizione;scaling tecnologico;;
+;;iter autorizzativo;creazione di posti di lavoro;SCAN;;
+;;iter autorizzativi;timori;scalabilità;;
+;;rilascio autorizzazioni;gruppi di protesta;indagine sismica;;
+;;legge;proteste dei residenti;Campagna Sismica Geotermia Paesi Bassi;;
+;;cornice legislativa;controversie;dati sismici;;
+;;leggi;rumori di cantiere;indagini sismiche;;
+;;processi politici;stufe;tasso di successo;;
+;;processi partecipativi;valore collettivo;incertezza sulla temperatura;;
+;;procedure di consultazione pubblica;;stima della temperatura;;
+;;serate informative;;perforazione test;;
+;;discussioni sociali;;perforazioni test;;
+;;permessi iniziali;;fase di test;;
+;;requisiti autorizzativi;;banco di prova;;
+;;;;camion vibratore;;
+;;;;camion vibratori;;
+;;;;regione comparabile;;
+;;;;flusso di calore;;
+;;;;potenza termica;;
+;;;;produzione d’acqua;;
+;;;;modelli della sorgente;;
+;;;;corrosiva;;
+;;;;regioni comparabili;;
+;;;;analisi dei reservoir;;
+;;;;prototipi;;
+;;;;banchi di prova;;

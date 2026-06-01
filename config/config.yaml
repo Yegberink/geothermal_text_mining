@@ -73,6 +73,7 @@ paths:
   top_newspapers_png: output/figures/top_newspapers.png
   article_descriptives_summary_csv: output/figures/article_descriptives_summary.csv
   frame_keywords_dir: output/figures/frame_keywords
+  region_frames_dir: output/figures/region_frames
   province_sentiment_table_csv: output/figures/province_sentiment_table.csv
   provinces_sentiment_balance_png: output/figures/provinces_sentiment_balance.png
   provinces_sentiment_distribution_png: output/figures/provinces_sentiment_distribution.png

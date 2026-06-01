@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from language_resources import KEYWORD_CSV_SEPARATOR, load_keyword_csv, read_csv_with_encoding_fallback
+
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -31,16 +33,8 @@ def parse_semicolon_values(value: object) -> list[str]:
     return [part.strip() for part in str(value).split(";") if part.strip()]
 
 
-def read_csv_with_encoding_fallback(path: Path, **kwargs: object) -> pd.DataFrame:
-    try:
-        return pd.read_csv(path, **kwargs)
-    except UnicodeDecodeError:
-        return pd.read_csv(path, encoding="cp1252", **kwargs)
-
-
 def load_keyword_table(path: Path) -> tuple[list[str], dict[str, list[str]]]:
-    df = read_csv_with_encoding_fallback(path)
-    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
+    df = load_keyword_csv(path)
 
     category_order: list[str] = []
     category_keywords: dict[str, list[str]] = {}
@@ -63,7 +57,7 @@ def write_keyword_table(category_order: list[str], category_keywords: dict[str, 
         data[category] = padded
     out_df = pd.DataFrame(data)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_df.to_csv(out_path, index=False)
+    out_df.to_csv(out_path, index=False, sep=KEYWORD_CSV_SEPARATOR)
 
 
 def main() -> None:

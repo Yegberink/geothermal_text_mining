@@ -110,6 +110,7 @@ ALL_TARGETS = [
     PATHS["top_newspapers_png"],
     PATHS["article_descriptives_summary_csv"],
     PATHS["frame_keywords_dir"],
+    PATHS["region_frames_dir"],
     PATHS["province_sentiment_table_csv"],
     PATHS["provinces_sentiment_balance_png"],
     PATHS["provinces_sentiment_distribution_png"],
@@ -495,6 +496,7 @@ rule visualize_absa_results:
         script=str(PROJECT_DIR / "scripts" / "visualize_absa_results.py"),
     output:
         frame_keywords=directory(PATHS["frame_keywords_dir"]),
+        region_frames=directory(PATHS["region_frames_dir"]),
         table=PATHS["province_sentiment_table_csv"],
         balance=PATHS["provinces_sentiment_balance_png"],
         distribution=PATHS["provinces_sentiment_distribution_png"],

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from language_resources import load_keyword_csv
+
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -23,8 +25,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_keyword_pattern(path: Path) -> re.Pattern[str]:
-    keywords_df = pd.read_csv(path)
-    keywords_df = keywords_df.loc[:, ~keywords_df.columns.astype(str).str.match(r"^Unnamed")]
+    keywords_df = load_keyword_csv(path)
 
     keywords = (
         keywords_df.stack()

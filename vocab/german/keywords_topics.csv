@@ -1,79 +1,83 @@
-Technological readiness,Comparing locations,Risks,Support,Governance,Knowledge availability,Sustainability,Costs
-Pilotprojekt,Referenzprojekt,Risiko,Akzeptanz,Genehmigung,geologische Daten,nachhaltige Energie,Kosten
-Pilot,Pilotgemeinde,Sicherheitsrisiko,öffentliche Akzeptanz,Genehmigungsverfahren,Untergrunddaten,erneuerbare Energie,Investition
-Pilotphase,Referenzanlage,seismisches Risiko,Unterstützung,Regulierung,Bodendaten,CO2-Reduktion,Kapitalinvestition
-Demonstrationsanlage,Praxisbeispiel,Erdbeben,lokale Unterstützung,Politik,geologische Untersuchung,Emissionsreduktion,Betriebskosten
-Demoprojekt,Fallstudie,Beben,Besorgnis,Entscheidungsfindung,seismische Untersuchung,Klimaneutralität,Projektfinanzierung
-Prototyp,internationale Fallstudie,Vibrationen,Protest,Umweltverträglichkeitsprüfung,Untergrundmodell,Ausstieg aus fossilen Energien,Subvention
-Prototypanlage,ausländische Projekte,seismische Aktivität,Widerstand,Bebauungsplan,geophysikalische Daten,saubere Energie,Budget
-Explorationsbohrung,ausländische Erfahrung,induzierte Seismizität,Misstrauen,Genehmigungsantrag,Bodencharakterisierung,grüne Energie,Kostenschätzung
-Testbohrung,Benchmark,Schäden an Gebäuden,Skepsis,Regierungsbeschluss,Kernproben,nachhaltige Wärme,Business Case
-Testphase,Leistungsbenchmark,Rissbildung,Vertrauen,Beteiligungsverfahren,Messdaten,CO2-neutral,Kosten-Nutzen-Analyse
-Versuchsphase,Leistungsvergleich,Setzungen,Projektakzeptanz,juristische Prüfung,Untergrundkarten,emissionsfrei,Amortisationszeit
-Proof of Concept,Beispielregion,Bodensenkung,lokale Beteiligung,politischer Rahmen,Reservoiranalyse,klimafreundlich,finanziell
-Konzeptvalidierung,Referenzregion,Bohrungsrisiko,soziale Akzeptanz,Verfahren,Datenlücke im Untergrund,Umweltgewinn,Rentabilität
-Praxisvalidierung,vergleichbare Region,trockene Bohrung,Unterstützung der Anwohner,Einspruchsverfahren,geologische Unsicherheit,Dekarbonisierung,Finanzierung
-Feldtest,Projektbenchmark,Temperaturunsicherheit,Projektunterstützung,Genehmigung,Untergrunderkundung,Klimaziele,operative Kosten
-Praxistest,Referenzfall,Unsicherheit,öffentliche Beteiligung,Regulierungsrahmen,seismische Daten,erneuerbare Wärme,Projektkosten
-Technologietest,Projekterfahrung,fehlgeschlagene Bohrung,Unsicherheit in der Nachbarschaft,Projektgenehmigung,geologische Interpretation,ökologischer Gewinn,Budgetüberschreitung
-Systemtest,internationale Erfahrung,enttäuschender Ertrag,lokale Sorgen,Prüfungsverfahren,Untergrunduntersuchung,saubere Wärme,Kostenüberschreitung
-experimentelle Anwendung,Projektbenchmarking,Störung,Unruhe,Prozessdauer,geophysikalische Untersuchung,nachhaltige Quelle,Wirtschaftlichkeit
-Experiment,Referenzgebiet,Zwischenfall,Kontroverse,Beschluss,Reservoirdaten,stetige Energie,finanzielle Machbarkeit
-experimentell,Projektvergleich,Problem,Sorge der Anwohner,Planung,geologisches Wissen,immer verfügbar,Projektbudget
-Innovationsprojekt,Praxisfall,technisches Risiko,lokale Diskussion,Entscheidungsphase,Untergrundparameter,Versorgungssicherheit,Investitionskosten
-Innovationsprogramm,Referenzfall,Projektrisiko,Protestaktion,politische Abstimmung,geophysikalischer Datensatz,erneuerbare Quelle,Betriebsbudget
-Reallabor,Benchmarkprojekt,Projektergebnisse,Bürgerinitiative,Projektverfahren,geologische Analyse,nachhaltige Wärmequelle,Betriebskosten des Unternehmens
-Living Lab,Leistungsfall,Fehlschlag,Anwohnerprotest,Genehmigungsverfahren,Bodencharakterisierungsuntersuchung,grüne Wärme,Kapitalkosten
-Testaufbau,Vergleichsprojekt,Risikozone,öffentliche Debatte,Bebauungsplanänderung,Reservoirmodellierung,CO2-freie Energie,operatives Budget
-Konzepttest,Referenzanlagen,Bebengefahr,lokaler Widerstand,Projektbeschluss,Temperaturschätzung,klimafest,Projektinvestition
-Entwicklungsphase,Erfolgsprojekt,Magnitude,gesellschaftlicher Widerstand,Regierungspolitik,Durchflussanalyse,saubere Energiequelle,Finanzierungskosten
-Entwicklungspfad,Ergebnis des Projektbenchmarks,seismische Messungen,Skepsis der Anwohner,politischer Beschluss,hydraulischer Test,nachhaltige Energiequelle,Betriebsinvestition
-Entwicklungsstadium,Daten des Projektbenchmarks,seismisches Messnetz,Sorge der Anwohner,Energieregulierung,Reservoircharakterisierung,emissionsfreie Energie,Kapitalbedarf
-Praxiserfahrung,Referenzbeispiel,Nachbeben,Bedenken der Anwohner,Genehmigungserteilung,Bohrergebnis,grüne Energiequelle,Projektrendite
-Betriebserfahrung,internationales Beispiel,Erderschütterung,gesellschaftliche Diskussion,Kosten des Projektverfahrens,Erfolgsquote,Klimaschutzlösung,Kostenstruktur
-Hochskalierung,internationaler Projektvergleich,seismische Erschütterungen,,politischer Prozess,Quellenleistung,erneuerbare Wärmequelle,Kostenanalyse
-Skalenerweiterung,praktische Ergebnisse im Ausland,Verwerfungstätigkeit,,staatliche Genehmigung,Reservoirdruck,saubere Wärmeversorgung,Finanzplanung
-Technologieentwicklung,Projektfall im Ausland,Bodenbeschleunigung,,Umweltbewertung,Durchlässigkeit,nachhaltige Wärmeversorgung,Projektkostenanalyse
-technologischer Test,Referenzfall im Ausland,Seismogramm,,Umweltprüfung,Wärmefluss,CO2-arme Energie,Projektbudget
-Systementwicklung,Benchmarkstudie,Bebencluster,,Umweltverträglichkeitsprüfung,geothermischer Gradient,klimaneutrale Energie,Projektfinanzen
-Projektentwicklung,Projektbenchmarkstudie,Untergrundspannung,,Genehmigungsauflage,natürliche Wärmereserven,grüne Energiewende,Kostenplanung
-Innovationsprozess,Projektevaluierung im Ausland,tektonische Störung,,Regulierungsprozess,Reservoirstabilität,nachhaltige Energieversorgung,Finanzierungsstruktur
-Technikentwicklung,Projekterfahrung im Ausland,Erdbebenrisiko,,staatliches Verfahren,Formationswasser,saubere Energiewende,Finanzierungsmodell
-Pilotanlage,internationaler Benchmark,Schäden durch Erdbeben,,staatliche Entscheidungsfindung,Reservoirdynamik,CO2-neutrale Wärme,Projektbudgetanalyse
-Demoversion,internationaler Projektbenchmark,Aufzeichnung von Erderschütterungen,,Projektgenehmigung,Wärmeflussmessung,klimafreundliche Energie,Projektkostenschätzung
-Technologieprobe,europäischer Projektvergleich,Bebenintensität,,Regulierungsbeschluss,geothermische Daten,grüne Wärmeversorgung,Finanzanalyse
-Praxisimplementierung,Island,Bebenmessungen,,Geothermieregulierung,Reservoiranalysedaten,nachhaltige Wärmelösung,Projektfinanzierungsmodell
-Praxistestanlage,Hellisheidi,Erdbebenmonitoring,,Wärmeregulierung,Untergrundpermeabilität,erneuerbare Wärmeversorgung,Investitionsstrategie
-Versuchsanlage,Italien,seismisches Überwachungsnetz,,Genehmigung für Wärmeprojekt,geologische Wärmevorräte,saubere Wärmequelle,Projektinvestitionen
-Testanlage,Larderello,seismische Überwachung,,Genehmigungsprozess,thermisches Reservoir,nachhaltige Wärmeproduktion,Planung der Projektkosten
-Versuchsgebiet,Schweiz,Messen seismischer Aktivität,,behördliche Entscheidung,permanenter Wärmestrom,klimaneutrale Wärme,Kostenberechnung
-Transformationsreallabor,St. Gallen,seismische Analyse,,energiepolitischer Rahmen,Aquiferformation,nachhaltige Energieinfrastruktur,Projektkostenanalyse
-,Südkorea,seismische Risikoanalyse,,Regulierung für Energieprojekte,hydrothermales System,saubere Wärmeinfrastruktur,finanzielle Projektanalyse
-,Pohang,seismische Risikoanalyse,,staatliche Genehmigung,Messung der Untergrundpermeabilität,,Struktur der Projektfinanzierung
-,Deutschland,Erdbebenempfindlichkeit,,Genehmigung für Energieprojekt,Projektgeologie,,Investitionsstruktur
-,Munningen,Verdichtung,,Regulierung für Energieinfrastruktur,Wissen,,Projektkostenstruktur
-,Thüringen,Absenkung,,Genehmigung für Infrastruktur,,,günstig
-,Staufen im Breisgau,Absenken,,Bürgerbeteiligung,,,günstiger
-,Boxtel,,,Beteiligungsprozess,,,teuer
-,Barendrecht,,,Informationsabend,,,teurer
-,,,,Mitbestimmung,,,
-,,,,Kommunikation mit Anwohnern,,,
-,,,,gesellschaftliche Debatte,,,
-,,,,Beteiligung der Anwohner,,,
-,,,,Debatte,,,
-,,,,Beteiligung der Bewohner,,,
-,,,,Informationsabend für Anwohner,,,
-,,,,Gespräch mit Anwohnern,,,
-,,,,lokale Versammlung,,,
-,,,,Dialog mit Anwohnern,,,
-,,,,öffentliche Versammlung,,,
-,,,,öffentliches Treffen,,,
-,,,,Beteiligungsabend,,,
-,,,,lokale Mitbestimmung,,,
-,,,,offene Debatte,,,
-,,,,lokale Konsultation,,,
-,,,,Beteiligungstreffen,,,
-,,,,Bewohnerdialog,,,
-,,,,lokaler Informationsabend,,,
-,,,,Bebauungspläne,,,
-,,,,Bebauungsplan,,,
+﻿Costs;Sustainability;Permitting & policy;Public acceptance;Technological uncertainty;Infrastructure;Operational risk
+bedrijfskosten;altijd beschikbaar;Beleid;acceptatie;benchmark;distributienet;aardbeving
+begroting;CO2 neutraal;beleidsbesluit;actiegroep;benchmarkproject;distributienetten;aardbevingen
+begrotingen;CO2 neutrale;beleidskader;arbeidsplaatsen;bodemdata;distributienetwerk;aardbevingsgevaar
+budget;CO2 neutraliteit;beleidskaders;banen;boorresultaat;Electriciteitsnet;aardbevingsrisico
+budgetten;CO2 reductie;Beleidsproces;bewonersprotest;boorresultaten;Electriciteitsnetten;aardbevingsrisico's
+businesscase;CO2 vrij;beleidsvoornemen;bewonerssteun;bronmodel;energienet;aardschok
+dure;CO2 vrije;beleidsvoornemens;bezorgdheid;casestudies;energienetten;aardschokken
+duur;CO2-neutraal;besluit;bouwgeluid;casestudy;energienetwerk;beving
+duurder;CO2-neutraliteit;besluitvorming;buurtprotest;corrosief;hoogspanningskabel;bevingen
+duurst;CO2-reductie;bestemmingsplan;buurtprotesten;debiet;hoogspanningskabels;bevingsgevaar
+exploitatiekosten;CO2-vrij;bestemmingsplannen;collectieve waarden;demoproject;hoogspanningsnet;bodemdaling
+Financieel;CO2-vrije;betrokkenheid;comfort;demoprojecten;hoogspanningsnetten;incidenten
+financiële;continue electriciteit;bewonersavond;comfortbeleving;doorlatendheid;Hoogspanningsnetwerk;bodemverzakking
+financiën;continue energie;bewonersavonden;controverse;experiment;infrastructuur;bodemverzakkingen
+financiering;continue energiebron;bewonersoverleg;Draagvlak;experimenteel;leidingnetwerk;breuklijn
+financieringskosten;continue energiebronnen;bewonersparticipatie;geluidsbelasting;experimentele;netbeheer;breuklijnen
+goedkoop;continue warmte;bijeenkomst;geluidsoverlast;experimenten;netbeheerder;grondwaterverontreiniging
+goedkoopst;decarbonisatie;bijeenkomsten;gewoonte;exploratieboring;netcongestie;grondwatervervuiling
+goedkope;Duurzaam;burgerparticipatie;gewoontes;exploratieboringen;nutsvoorziening;incident
+goedkoper;Duurzaamste;debat;hinder;Geologisch onderzoek;nutsvoorzieningen;inklinking
+inkomsten;Duurzame;debatten;identiteit;geologische analyse;pijpleiding;lekkage
+Investering;Duurzamer;goedkeuring;kachel;geologische analyses;pijpleidingen;lekkages
+investeringen;emissie;informatieavond;klacht;Geologische data;Stadsverwarming;magnitude
+investeringskosten;emissiereductie;inspraak;klachten;;stadswarmte;milieuvervuiling
+investeringsstrategie;emissievrij;inspraakprocedure;klachtencommissie;Geologische onderzoeken;stroomkabel;naschokken
+investeringsstrategiën;emissievrije;juridisch;koken;geologische onzekerheden;stroomkabels;oppervlaktewaterverontreiniging
+kapitaalinvestering;energietransitie;juridische;leefstijl;geologische onzekerheid;warmteleiding;oppervlaktewatervervuiling
+kapitaalinvesteringen;groene elektriciteit;maatschappelijke discussie;leefstijlen;geothermische gradient;warmteleidingen;richter
+kapitaalkosten;groene energie;mer;lichthinder;kennis;warmtenet;schadelijke stoffen
+Kosten;groene energiebron;milieueffectbeoordeling;lichtoverlast;meetgegevens;warmtenetten;scheurvorming
+kostenanalyse;groene energiebronnen;milieueffectbeoordelingen;lokale economie;Metingen;warmtenetwerk;seismiciteit
+kostenanalyses;groene technologie;Milieueffectrapportage;luidruchtig;mineraalrijk;warmtewisselaar;seismisch risico
+kostenraming;groene warmte;Milieueffectrapportages;luidruchtige;mislukte boring;warmtewisselaars;seismische activiteit
+kostenramingen;groene warmtevoorziening;milieutoets;onrust;ondergronddata;;seismische risico's
+projectinvestering;Hernieuwbaar;milieutoetsen;overlast;ondergrondonderzoek;;trillingsgevaar
+projectinvesteringen;Hernieuwbare;opsporingsvergunning;stinken;Ondergrondsmodel;;trilling
+rendabel;klimaatbestendig;opsporingsvergunningen;;ontwikkelingsfase;;trillingen
+rendabele;klimaatdoel;overheidsbeleid;protest;opschaling;;veiligheid
+rendabiliteit;Klimaatdoelen;overheidsbesluit;protestactie;pilot;;veiligheidsrisico
+rendement;Klimaatneutraal;participatie;protestacties;pilotfase;;verontreiniging
+Subsidie;klimaatneutrale;participatieavond;protesten;pilotproject;;vervuiling
+subsidies;Klimaatneutraliteit;participatieavonden;protesteren;proefboring;;verzakking
+terugverdientijd;Klimaatvriendelijk;participatieproces;scepsis;proefboringen;;verzakkingen
+Winst;klimaatvriendelijke;planvorming;skeptisch;proefinstallatie;;waterverontreiniging
+winsten;milieuwinst;procedure;skeptische;proefinstallaties;;watervervuiling
+;schone elektriciteit;procedures;solidariteit;proeftuin;;naschok
+;Schone energie;regelgeving;stank;projectbenchmark;;schadelijke stof
+;milieuwinsten;samenspraak;steun;prototype;;gevaarlijke stof
+;schone energiebron;startvergunning;stofhinder;referentie casus;;gevaarlijke stoffen
+;schone energiebronnen;Vergunning;stookgedrag;Meting;;drinkwater
+;schone warmte;vergunningaanvraag;traditie;referentiecase;;drinkwaterverontreiniging
+;schone warmtevoorziening;vergunningaanvragen;tradities;referentiecases;;drinkwatervervuiling
+;voorzieningszekerheid;vergunningen;verkeersbelasting;Reservoir analyse;;
+;CO2-neutrale;vergunningseis;Vertrouwen;reservoirdata;;
+;continue warmtevoorziening;vergunningsprocedure;verwarmingsvoorkeur;reservoirdruk;;
+;klimaat;vergunningsprocedures;wantrouwen;reservoirmodel;;
+;;vergunningstraject;Weerstand;scaling;;
+;;vergunningstrajecten;werkgelegenheid;SCAN;;
+;;vergunnningverlening;zorgen;Schaalbaarheid;;
+;;wet;actiegroepen;Seismisch onderzoek;;
+;;wettelijk kader;bewonersprotesten;Seismische Campagne Aardwarmte Nederland;;
+;;wetten;controversen;seismische data;;
+;;Beleidsprocessen;bouwgeluiden;Seismische onderzoeken;;
+;;participatieprocessen;kachels;slagingspercentage;;
+;;inspraakprocedures;collectieve waarde;temperatuur onzekerheid;;
+;;informatieavonden;;temperatuurinschatting;;
+;;maatschappelijke discussies;;testboring;;
+;;startvergunningen;;testboringen;;
+;;vergunningseisen;;testfase;;
+;;;;testopstelling;;
+;;;;trillingsvrachtwagen;;
+;;;;trillingsvrachtwagens;;
+;;;;vergelijkbare regio;;
+;;;;warmteflux;;
+;;;;warmtevermogen;;
+;;;;waterproductie;;
+;;;;bronmodellen;;
+;;;;corrosieve;;
+;;;;vergelijkbare regio's;;
+;;;;reservoir analyses;;
+;;;;prototypes;;
+;;;;testopstellingen;;

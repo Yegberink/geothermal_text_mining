@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from language_resources import load_keyword_csv
+
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -22,8 +24,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_vocab_patterns(path: Path) -> tuple[list[str], dict[str, re.Pattern[str]]]:
-    vocab_df = pd.read_csv(path)
-    vocab_df = vocab_df.loc[:, ~vocab_df.columns.astype(str).str.match(r"^Unnamed")]
+    vocab_df = load_keyword_csv(path)
 
     categories: list[str] = []
     patterns: dict[str, re.Pattern[str]] = {}
