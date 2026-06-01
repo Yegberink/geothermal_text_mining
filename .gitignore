@@ -37,3 +37,4 @@ annotation/
 
 # OS files
 *.DS_Store
+*.gpkg
