@@ -13,29 +13,60 @@ MAKE_ANNOTATION_DF = config.get("make_annotation_df", False)
 ANNOTATION = config.get("annotation", {})
 PATHS = config["paths"]
 LANGUAGE = config.get("language")
-COUNTRY = config.get("country")
+DEFAULT_COUNTRY = config.get("country")
+LANGUAGE_COUNTRIES = config.get("countries", {})
 
 
-def _local_path(path_str):
+def _discover_languages():
+    requested = config.get("languages", [LANGUAGE] if LANGUAGE else "auto")
+    if requested in (None, "", "auto"):
+        candidates = sorted(
+            path.parent.name
+            for path in Path("vocab").glob("*/keywords_topics.csv")
+            if Path("input_data", path.parent.name).exists()
+        )
+    elif isinstance(requested, str):
+        candidates = [requested]
+    else:
+        candidates = list(requested)
+    return [language for language in candidates if language]
+
+
+LANGUAGES = _discover_languages()
+if not LANGUAGES:
+    raise ValueError("No workflow languages found. Expected vocab/{language}/keywords_topics.csv and input_data/{language}/.")
+
+LANGUAGE_PATTERN = "|".join(re.escape(language) for language in LANGUAGES)
+
+
+def _localize_path(path_str, language):
     path = Path(path_str)
-    if LANGUAGE and len(path.parts) > 0:
+    if language and len(path.parts) > 0:
         if path.parts[0] == "output":
-            return str(Path("output") / LANGUAGE / Path(*path.parts[1:]))
+            return str(Path("output") / language / Path(*path.parts[1:]))
         if path.parts[0] == "cache":
-            return str(Path("cache") / LANGUAGE / Path(*path.parts[1:]))
+            return str(Path("cache") / language / Path(*path.parts[1:]))
         if path.parts[0] == "input_data":
-            return str(Path("input_data") / LANGUAGE / Path(*path.parts[1:]))
+            return str(Path("input_data") / language / Path(*path.parts[1:]))
         if path.parts[0] == "data":
-            return str(Path("data") / LANGUAGE / Path(*path.parts[1:]))
+            return str(Path("data") / language / Path(*path.parts[1:]))
         if path.parts[0] == "annotation":
-            return str(Path("annotation") / LANGUAGE / Path(*path.parts[1:]))
+            return str(Path("annotation") / language / Path(*path.parts[1:]))
         if path.parts[0] == "vocab":
-            return str(Path("vocab") / LANGUAGE / Path(*path.parts[1:]))
+            return str(Path("vocab") / language / Path(*path.parts[1:]))
     return str(path)
 
 
-if LANGUAGE:
-    PATHS = {key: _local_path(value) for key, value in PATHS.items()}
+def path_for(language, key):
+    return _localize_path(PATHS[key], language)
+
+
+def pattern_for(key):
+    return _localize_path(PATHS[key], "{language}")
+
+
+def country_for(language):
+    return LANGUAGE_COUNTRIES.get(language) or DEFAULT_COUNTRY or language
 
 
 def _default_country_codes(country):
@@ -45,24 +76,36 @@ def _default_country_codes(country):
         "italy": "it,sm,va",
         "germany": "de",
         "deutschland": "de",
+        "german-speaking countries": "de,at,ch,li",
+        "german speaking countries": "de,at,ch,li",
     }
     return mapping.get(country_norm, "")
 
 
-def _language_resource_path(filename):
-    if LANGUAGE:
-        return str(Path("vocab") / LANGUAGE / filename)
-    return str(Path("vocab") / filename)
+def _country_codes_for(language):
+    configured = ONLINE_GEOCODING.get("country_codes_by_language", {}).get(language)
+    if configured:
+        return configured
+    return ONLINE_GEOCODING.get("country_codes") or _default_country_codes(country_for(language))
 
 
-PREPROCESS_RTF_CHUNKS_DIR = PATHS.get(
-    "preprocess_rtf_chunks_dir",
-    str(Path(PATHS["paragraphs_csv"]).parent / "_preprocess_rtf_chunks"),
-)
+def _language_resource_path(language, filename):
+    return str(Path("vocab") / language / filename)
 
 
-def _discover_rtf_input_files():
-    input_dir = Path(PATHS["input_rtf_dir"])
+wildcard_constraints:
+    language=LANGUAGE_PATTERN,
+
+
+def _preprocess_chunks_dir(language):
+    return path_for(
+        language,
+        "preprocess_rtf_chunks_dir",
+    )
+
+
+def _discover_rtf_input_files(language):
+    input_dir = Path(path_for(language, "input_rtf_dir"))
     if not input_dir.exists():
         return []
     return sorted(
@@ -74,8 +117,8 @@ def _discover_rtf_input_files():
     )
 
 
-def _rtf_id_for_path(path_str):
-    input_dir = Path(PATHS["input_rtf_dir"])
+def _rtf_id_for_path(language, path_str):
+    input_dir = Path(path_for(language, "input_rtf_dir"))
     path = Path(path_str)
     try:
         rel = path.relative_to(input_dir).as_posix()
@@ -87,38 +130,56 @@ def _rtf_id_for_path(path_str):
     return f"{safe_stem[:90]}-{digest}"
 
 
-RTF_INPUT_FILES = _discover_rtf_input_files()
-RTF_ID_TO_INPUT = {_rtf_id_for_path(path): path for path in RTF_INPUT_FILES}
-RTF_IDS = sorted(RTF_ID_TO_INPUT)
-RTF_RAW_ARTICLE_CHUNKS = [
-    str(Path(PREPROCESS_RTF_CHUNKS_DIR) / "raw_articles" / f"{rtf_id}.csv")
-    for rtf_id in RTF_IDS
-]
-RTF_RAW_ARTICLE_ARGS = (
-    "--input-raw-articles-csv " + " ".join(shlex.quote(path) for path in RTF_RAW_ARTICLE_CHUNKS)
-    if RTF_RAW_ARTICLE_CHUNKS
-    else ""
-)
+RTF_ID_TO_INPUT_BY_LANGUAGE = {
+    language: {
+        _rtf_id_for_path(language, path): path
+        for path in _discover_rtf_input_files(language)
+    }
+    for language in LANGUAGES
+}
 
+
+def _rtf_chunks(language):
+    return [
+        str(Path(_preprocess_chunks_dir(language)) / "raw_articles" / f"{rtf_id}.csv")
+        for rtf_id in sorted(RTF_ID_TO_INPUT_BY_LANGUAGE.get(language, {}))
+    ]
+
+
+def _rtf_raw_article_args(language):
+    chunks = _rtf_chunks(language)
+    return (
+        "--input-raw-articles-csv " + " ".join(shlex.quote(path) for path in chunks)
+        if chunks
+        else ""
+    )
+
+
+PER_LANGUAGE_TARGET_KEYS = [
+    "sentences_with_categories_admin_csv",
+    "sentences_with_categories_admin_gpkg",
+    "articles_per_year_csv",
+    "articles_per_year_png",
+    "top_newspapers_csv",
+    "top_newspapers_png",
+    "article_descriptives_summary_csv",
+    "frame_keywords_dir",
+    "region_frames_dir",
+    "province_sentiment_table_csv",
+    "provinces_sentiment_balance_png",
+    "provinces_sentiment_distribution_png",
+    "categories_sentiment_distribution_png",
+    "locations_map_html",
+]
 
 ALL_TARGETS = [
-    PATHS["sentences_with_categories_admin_csv"],
-    PATHS["sentences_with_categories_admin_gpkg"],
-    PATHS["articles_per_year_csv"],
-    PATHS["articles_per_year_png"],
-    PATHS["top_newspapers_csv"],
-    PATHS["top_newspapers_png"],
-    PATHS["article_descriptives_summary_csv"],
-    PATHS["frame_keywords_dir"],
-    PATHS["region_frames_dir"],
-    PATHS["province_sentiment_table_csv"],
-    PATHS["provinces_sentiment_balance_png"],
-    PATHS["provinces_sentiment_distribution_png"],
-    PATHS["categories_sentiment_distribution_png"],
-    PATHS["locations_map_html"],
+    path_for(language, key)
+    for language in LANGUAGES
+    for key in PER_LANGUAGE_TARGET_KEYS
 ]
 if MAKE_ANNOTATION_DF:
-    ALL_TARGETS.append(PATHS["annotation_sentences_csv"])
+    ALL_TARGETS.extend(path_for(language, "annotation_sentences_csv") for language in LANGUAGES)
+    ALL_TARGETS.append("annotation/sentences_for_annotation_all_languages.csv")
 
 
 rule all:
@@ -128,16 +189,17 @@ rule all:
 
 rule preprocess_single_rtf_to_raw_articles:
     input:
-        rtf=lambda wildcards: RTF_ID_TO_INPUT[wildcards.rtf_id],
+        rtf=lambda wildcards: RTF_ID_TO_INPUT_BY_LANGUAGE[wildcards.language][wildcards.rtf_id],
         script=str(PROJECT_DIR / "scripts" / "preprocess_rtf_to_paragraphs.py"),
     output:
-        raw=str(Path(PREPROCESS_RTF_CHUNKS_DIR) / "raw_articles" / "{rtf_id}.csv"),
+        raw=pattern_for("preprocess_rtf_chunks_dir") + "/raw_articles/{rtf_id}.csv",
     params:
-        input_dir=PATHS["input_rtf_dir"],
+        input_dir=lambda wildcards: path_for(wildcards.language, "input_rtf_dir"),
     shell:
         """
         {PYTHON} scripts/preprocess_rtf_to_paragraphs.py \
           --project-dir {PROJECT_DIR} \
+          --language {wildcards.language} \
           --input-rtf-dir {params.input_dir:q} \
           --input-rtf-file {input.rtf:q} \
           --output-raw-articles-csv {output.raw:q} \
@@ -147,19 +209,20 @@ rule preprocess_single_rtf_to_raw_articles:
 
 rule preprocess_rtf_to_paragraphs:
     input:
-        chunks=RTF_RAW_ARTICLE_CHUNKS,
-        regions=PATHS["newspaper_regions_csv"],
+        chunks=lambda wildcards: _rtf_chunks(wildcards.language),
+        regions=pattern_for("newspaper_regions_csv"),
         script=str(PROJECT_DIR / "scripts" / "preprocess_rtf_to_paragraphs.py"),
     output:
-        paragraphs=PATHS["paragraphs_csv"],
-        articles=PATHS["articles_csv"],
+        paragraphs=pattern_for("paragraphs_csv"),
+        articles=pattern_for("articles_csv"),
     params:
-        input_dir=PATHS["input_rtf_dir"],
-        raw_article_args=RTF_RAW_ARTICLE_ARGS,
+        input_dir=lambda wildcards: path_for(wildcards.language, "input_rtf_dir"),
+        raw_article_args=lambda wildcards: _rtf_raw_article_args(wildcards.language),
     shell:
         """
         {PYTHON} scripts/preprocess_rtf_to_paragraphs.py \
           --project-dir {PROJECT_DIR} \
+          --language {wildcards.language} \
           --input-rtf-dir {params.input_dir:q} \
           {params.raw_article_args} \
           --newspaper-region-csv {input.regions:q} \
@@ -171,12 +234,12 @@ rule preprocess_rtf_to_paragraphs:
 
 rule update_keyword_framework:
     input:
-        base_csv=PATHS["keywords_topics_base_csv"],
+        base_csv=pattern_for("keywords_topics_base_csv"),
     output:
-        keywords_csv=PATHS["keywords_topics_csv"],
-        audit_csv=PATHS["keyword_framework_audit_csv"],
+        keywords_csv=pattern_for("keywords_topics_csv"),
+        audit_csv=pattern_for("keyword_framework_audit_csv"),
     params:
-        review_csv=PATHS["keyword_review_export_csv"],
+        review_csv=lambda wildcards: path_for(wildcards.language, "keyword_review_export_csv"),
     shell:
         """
         {PYTHON} scripts/update_keywords_framework.py \
@@ -190,10 +253,10 @@ rule update_keyword_framework:
 
 rule filter_paragraphs_by_keywords:
     input:
-        paragraphs=PATHS["paragraphs_csv"],
-        keywords=PATHS["keywords_topics_csv"],
+        paragraphs=pattern_for("paragraphs_csv"),
+        keywords=pattern_for("keywords_topics_csv"),
     output:
-        PATHS["paragraph_keyword_filtered_csv"],
+        pattern_for("paragraph_keyword_filtered_csv"),
     shell:
         """
         {PYTHON} scripts/filter_paragraphs_by_keywords.py \
@@ -206,17 +269,18 @@ rule filter_paragraphs_by_keywords:
 
 rule classify_geothermal:
     input:
-        PATHS["paragraph_keyword_filtered_csv"],
+        pattern_for("paragraph_keyword_filtered_csv"),
     output:
-        csv=PATHS["paragraph_geothermal_csv"],
+        csv=pattern_for("paragraph_geothermal_csv"),
     params:
-        checkpoint=PATHS["geo_class_checkpoint"],
-        cache=PATHS["geo_class_cache"],
-        partial=PATHS["geo_class_partial_csv"],
+        checkpoint=lambda wildcards: path_for(wildcards.language, "geo_class_checkpoint"),
+        cache=lambda wildcards: path_for(wildcards.language, "geo_class_cache"),
+        partial=lambda wildcards: path_for(wildcards.language, "geo_class_partial_csv"),
         model=OLLAMA["geothermal_model"],
         url=OLLAMA["url"],
         sleep_s=OLLAMA["sleep_s"],
         save_every=OLLAMA["save_every"],
+        country=lambda wildcards: country_for(wildcards.language),
     shell:
         """
         {PYTHON} scripts/is_geothermal.py \
@@ -228,7 +292,7 @@ rule classify_geothermal:
           --partial-csv {params.partial} \
           --ollama-url {params.url} \
           --model {params.model} \
-          --country {COUNTRY} \
+          --country "{params.country}" \
           --sleep-s {params.sleep_s} \
           --save-every {params.save_every}
         """
@@ -236,17 +300,18 @@ rule classify_geothermal:
 
 rule extract_locations:
     input:
-        PATHS["paragraph_geothermal_csv"],
+        pattern_for("paragraph_geothermal_csv"),
     output:
-        csv=PATHS["paragraph_locations_csv"],
+        csv=pattern_for("paragraph_locations_csv"),
     params:
-        checkpoint=PATHS["geo_checkpoint"],
-        cache=PATHS["geo_cache"],
-        partial=PATHS["geo_partial_csv"],
+        checkpoint=lambda wildcards: path_for(wildcards.language, "geo_checkpoint"),
+        cache=lambda wildcards: path_for(wildcards.language, "geo_cache"),
+        partial=lambda wildcards: path_for(wildcards.language, "geo_partial_csv"),
         model=OLLAMA["location_model"],
         url=OLLAMA["url"],
         sleep_s=OLLAMA["sleep_s"],
         save_every=OLLAMA["save_every"],
+        country=lambda wildcards: country_for(wildcards.language),
     shell:
         """
         {PYTHON} scripts/locations_ollama.py \
@@ -258,7 +323,7 @@ rule extract_locations:
           --partial-csv {params.partial} \
           --ollama-url {params.url} \
           --model {params.model} \
-          --country {COUNTRY} \
+          --country "{params.country}" \
           --sleep-s {params.sleep_s} \
           --save-every {params.save_every}
         """
@@ -266,12 +331,14 @@ rule extract_locations:
 
 rule geocode_paragraphs_offline:
     input:
-        csv=PATHS["paragraph_locations_csv"],
-        muni=PATHS["municipality_gpkg"],
-        prov=PATHS["province_gpkg"],
+        csv=pattern_for("paragraph_locations_csv"),
+        muni=pattern_for("municipality_gpkg"),
+        prov=pattern_for("province_gpkg"),
     output:
-        gpkg=PATHS["paragraphs_with_geo_offline_gpkg"],
-        csv=PATHS["paragraph_offline_geocoding_csv"],
+        gpkg=pattern_for("paragraphs_with_geo_offline_gpkg"),
+        csv=pattern_for("paragraph_offline_geocoding_csv"),
+    params:
+        country=lambda wildcards: country_for(wildcards.language),
     shell:
         """
         {PYTHON} scripts/geocoding_offline.py \
@@ -281,7 +348,7 @@ rule geocode_paragraphs_offline:
           --province-gpkg {input.prov} \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv} \
-          --country "{COUNTRY}" \
+          --country "{params.country}" \
           --points-layer paragraphs_points \
           --polygons-layer paragraphs_polygons
         """
@@ -289,15 +356,16 @@ rule geocode_paragraphs_offline:
 
 rule geocode_paragraphs_online:
     input:
-        csv=PATHS["paragraph_offline_geocoding_csv"],
-        muni=PATHS["municipality_gpkg"],
-        prov=PATHS["province_gpkg"],
+        csv=pattern_for("paragraph_offline_geocoding_csv"),
+        muni=pattern_for("municipality_gpkg"),
+        prov=pattern_for("province_gpkg"),
     output:
-        gpkg=PATHS["paragraphs_with_geo_gpkg"],
-        csv=PATHS["paragraphs_with_geo_csv"],
+        gpkg=pattern_for("paragraphs_with_geo_gpkg"),
+        csv=pattern_for("paragraphs_with_geo_csv"),
     params:
-        cache=PATHS["nominatim_cache_json"],
-        country_codes=ONLINE_GEOCODING.get("country_codes") or _default_country_codes(COUNTRY),
+        cache=lambda wildcards: path_for(wildcards.language, "nominatim_cache_json"),
+        country=lambda wildcards: country_for(wildcards.language),
+        country_codes=lambda wildcards: _country_codes_for(wildcards.language),
         user_agent=ONLINE_GEOCODING.get("user_agent", "absa-geo-mapper"),
         save_every=ONLINE_GEOCODING.get("save_every", 50),
         print_every=ONLINE_GEOCODING.get("print_every", 25),
@@ -317,7 +385,7 @@ rule geocode_paragraphs_online:
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv} \
           --cache-path {params.cache} \
-          --country "{COUNTRY}" \
+          --country "{params.country}" \
           --country-codes "{params.country_codes}" \
           --user-agent {params.user_agent} \
           --save-every {params.save_every} \
@@ -335,25 +403,25 @@ rule geocode_paragraphs_online:
 
 rule split_paragraphs_to_sentences:
     input:
-        PATHS["paragraphs_with_geo_csv"],
+        pattern_for("paragraphs_with_geo_csv"),
     output:
-        PATHS["sentence_locations_csv"],
+        pattern_for("sentence_locations_csv"),
     shell:
         """
         {PYTHON} scripts/split_paragraphs_to_sentences.py \
           --project-dir {PROJECT_DIR} \
           --input-csv {input} \
           --output-csv {output} \
-          --language {LANGUAGE}
+          --language {wildcards.language}
         """
 
 
 rule export_frame_keyword_review_candidates:
     input:
-        sentences_csv=PATHS["sentence_locations_csv"],
-        keywords_csv=PATHS["keywords_topics_csv"],
+        sentences_csv=pattern_for("sentence_locations_csv"),
+        keywords_csv=pattern_for("keywords_topics_csv"),
     output:
-        PATHS["keyword_review_candidates_csv"],
+        pattern_for("keyword_review_candidates_csv"),
     shell:
         """
         {PYTHON} scripts/export_frame_keyword_review_candidates.py \
@@ -366,11 +434,11 @@ rule export_frame_keyword_review_candidates:
 
 rule identify_sentence_frames:
     input:
-        csv=PATHS["sentence_locations_csv"],
-        keywords=PATHS["keywords_topics_csv"],
+        csv=pattern_for("sentence_locations_csv"),
+        keywords=pattern_for("keywords_topics_csv"),
     output:
-        long_csv=PATHS["sentences_with_frames_long_csv"],
-        short_csv=PATHS["sentences_with_frames_short_csv"],
+        long_csv=pattern_for("sentences_with_frames_long_csv"),
+        short_csv=pattern_for("sentences_with_frames_short_csv"),
     shell:
         """
         {PYTHON} scripts/classification_sentences.py \
@@ -385,16 +453,16 @@ rule identify_sentence_frames:
 
 rule classify_sentence_sentiment:
     input:
-        PATHS["sentences_with_frames_long_csv"],
+        pattern_for("sentences_with_frames_long_csv"),
     output:
-        PATHS["sentence_sentiment_csv"],
+        pattern_for("sentence_sentiment_csv"),
     params:
-        checkpoint=PATHS["sentence_sentiment_checkpoint"],
-        cache=PATHS["sentence_sentiment_cache"],
-        partial=PATHS["sentence_sentiment_partial_csv"],
+        checkpoint=lambda wildcards: path_for(wildcards.language, "sentence_sentiment_checkpoint"),
+        cache=lambda wildcards: path_for(wildcards.language, "sentence_sentiment_cache"),
+        partial=lambda wildcards: path_for(wildcards.language, "sentence_sentiment_partial_csv"),
         model=config.get("sentiment_ollama", {}).get("model", "llama3.1:8b"),
         ollama_url=OLLAMA["url"],
-        language=LANGUAGE,
+        language=lambda wildcards: wildcards.language,
         prompt_variant=config.get("sentiment_ollama", {}).get("prompt_variant", "zero_shot"),
         timeout=config.get("sentiment_ollama", {}).get("timeout", 120),
         sleep_s=config.get("sentiment_ollama", {}).get("sleep_s", 0.0),
@@ -421,12 +489,12 @@ rule classify_sentence_sentiment:
 
 rule classify_sentence_categories:
     input:
-        csv=PATHS["sentence_sentiment_csv"],
-        keywords=PATHS["keywords_topics_csv"],
+        csv=pattern_for("sentence_sentiment_csv"),
+        keywords=pattern_for("keywords_topics_csv"),
     output:
-        gpkg=PATHS["sentences_with_categories_gpkg"],
-        long_csv=PATHS["sentences_with_categories_long_csv"],
-        short_csv=PATHS["sentences_with_categories_short_csv"],
+        gpkg=pattern_for("sentences_with_categories_gpkg"),
+        long_csv=pattern_for("sentences_with_categories_long_csv"),
+        short_csv=pattern_for("sentences_with_categories_short_csv"),
     shell:
         """
         {PYTHON} scripts/classification_sentences.py \
@@ -443,14 +511,14 @@ rule classify_sentence_categories:
 
 rule aggregate_to_admin_areas:
     input:
-        gpkg=PATHS["sentences_with_categories_gpkg"],
-        muni=PATHS["municipality_gpkg"],
-        prov=PATHS["province_gpkg"],
+        gpkg=pattern_for("sentences_with_categories_gpkg"),
+        muni=pattern_for("municipality_gpkg"),
+        prov=pattern_for("province_gpkg"),
     output:
-        gpkg=PATHS["sentences_with_categories_admin_gpkg"],
-        csv=PATHS["sentences_with_categories_admin_csv"],
+        gpkg=pattern_for("sentences_with_categories_admin_gpkg"),
+        csv=pattern_for("sentences_with_categories_admin_csv"),
     params:
-        location_overrides=_language_resource_path("location_province_overrides.csv"),
+        location_overrides=lambda wildcards: _language_resource_path(wildcards.language, "location_province_overrides.csv"),
     shell:
         """
         {PYTHON} scripts/geographic_aggregation.py \
@@ -467,16 +535,16 @@ rule aggregate_to_admin_areas:
 
 rule visualize_article_descriptives:
     input:
-        articles_csv=PATHS["articles_csv"],
+        articles_csv=pattern_for("articles_csv"),
         script=str(PROJECT_DIR / "scripts" / "visualize_article_descriptives.py"),
     output:
-        articles_per_year_csv=PATHS["articles_per_year_csv"],
-        articles_per_year_png=PATHS["articles_per_year_png"],
-        top_newspapers_csv=PATHS["top_newspapers_csv"],
-        top_newspapers_png=PATHS["top_newspapers_png"],
-        summary_csv=PATHS["article_descriptives_summary_csv"],
+        articles_per_year_csv=pattern_for("articles_per_year_csv"),
+        articles_per_year_png=pattern_for("articles_per_year_png"),
+        top_newspapers_csv=pattern_for("top_newspapers_csv"),
+        top_newspapers_png=pattern_for("top_newspapers_png"),
+        summary_csv=pattern_for("article_descriptives_summary_csv"),
     params:
-        output_dir=PATHS["figures_dir"],
+        output_dir=lambda wildcards: path_for(wildcards.language, "figures_dir"),
     shell:
         """
         {PYTHON} scripts/visualize_article_descriptives.py \
@@ -489,22 +557,23 @@ rule visualize_article_descriptives:
 
 rule visualize_absa_results:
     input:
-        admin_csv=PATHS["sentences_with_categories_admin_csv"],
-        categories_csv=PATHS["sentences_with_categories_short_csv"],
-        keywords_csv=PATHS["keywords_topics_csv"],
-        province_gpkg=PATHS["province_gpkg"],
+        admin_csv=pattern_for("sentences_with_categories_admin_csv"),
+        categories_csv=pattern_for("sentences_with_categories_short_csv"),
+        keywords_csv=pattern_for("keywords_topics_csv"),
+        province_gpkg=pattern_for("province_gpkg"),
         script=str(PROJECT_DIR / "scripts" / "visualize_absa_results.py"),
     output:
-        frame_keywords=directory(PATHS["frame_keywords_dir"]),
-        region_frames=directory(PATHS["region_frames_dir"]),
-        table=PATHS["province_sentiment_table_csv"],
-        balance=PATHS["provinces_sentiment_balance_png"],
-        distribution=PATHS["provinces_sentiment_distribution_png"],
-        categories=PATHS["categories_sentiment_distribution_png"],
-        heatmap=PATHS["locations_map_html"],
+        frame_keywords=directory(pattern_for("frame_keywords_dir")),
+        region_frames=directory(pattern_for("region_frames_dir")),
+        table=pattern_for("province_sentiment_table_csv"),
+        balance=pattern_for("provinces_sentiment_balance_png"),
+        distribution=pattern_for("provinces_sentiment_distribution_png"),
+        categories=pattern_for("categories_sentiment_distribution_png"),
+        heatmap=pattern_for("locations_map_html"),
     params:
-        output_dir=PATHS["figures_dir"],
-        location_overrides=_language_resource_path("location_province_overrides.csv"),
+        output_dir=lambda wildcards: path_for(wildcards.language, "figures_dir"),
+        country=lambda wildcards: country_for(wildcards.language),
+        location_overrides=lambda wildcards: _language_resource_path(wildcards.language, "location_province_overrides.csv"),
     shell:
         """
         {PYTHON} scripts/visualize_absa_results.py \
@@ -514,25 +583,50 @@ rule visualize_absa_results:
           --keywords-csv {input.keywords_csv} \
           --province-gpkg {input.province_gpkg} \
           --output-dir {params.output_dir} \
-          --country "{COUNTRY}" \
+          --country "{params.country}" \
           --location-province-overrides {params.location_overrides}
         """
 
 
 rule make_annotation_df:
     input:
-        admin_csv=PATHS["sentences_with_categories_admin_csv"],
+        sentences_csv=pattern_for("sentence_locations_csv"),
+        sentiment_csv=pattern_for("sentence_sentiment_csv"),
+        keywords_csv=pattern_for("keywords_topics_csv"),
+        paragraph_geothermal_csv=pattern_for("paragraph_geothermal_csv"),
     output:
-        PATHS["annotation_sentences_csv"],
+        pattern_for("annotation_sentences_csv"),
     params:
         province_filter_regex=ANNOTATION.get("province_filter_regex", ""),
         exclude_neutral=ANNOTATION.get("exclude_neutral", True),
+        sentence_sample_size=ANNOTATION.get("sentence_sample_size", 500),
+        paragraph_sample_size=ANNOTATION.get("paragraph_sample_size", 100),
+        random_state=ANNOTATION.get("sample_random_state", 42),
     shell:
         """
         {PYTHON} scripts/make_annotation_df.py \
           --project-dir {PROJECT_DIR} \
-          --input-csv {input.admin_csv} \
+          --input-csv {input.sentences_csv} \
+          --paragraph-geothermal-csv {input.paragraph_geothermal_csv} \
+          --sentiment-csv {input.sentiment_csv} \
+          --keywords-csv {input.keywords_csv} \
           --output-csv {output} \
           --province-filter-regex "{params.province_filter_regex}" \
-          --exclude-neutral {params.exclude_neutral}
+          --exclude-neutral {params.exclude_neutral} \
+          --sentence-sample-size {params.sentence_sample_size} \
+          --paragraph-sample-size {params.paragraph_sample_size} \
+          --random-state {params.random_state}
+        """
+
+
+rule combine_annotation_dataframes:
+    input:
+        lambda wildcards: [path_for(language, "annotation_sentences_csv") for language in LANGUAGES]
+    output:
+        "annotation/sentences_for_annotation_all_languages.csv"
+    shell:
+        """
+        {PYTHON} scripts/combine_annotation_dataframes.py \
+          --output-csv {output} \
+          --inputs {input}
         """

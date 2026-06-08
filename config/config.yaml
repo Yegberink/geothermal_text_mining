@@ -1,11 +1,19 @@
 python: python
-language: italian
-country: Italy
+language: german
+languages: auto
+country: German-speaking countries
+countries:
+  dutch: Netherlands
+  german: German-speaking countries
+  italian: Italy
 make_annotation_df: true
 
 annotation:
-  province_filter_regex: Zuid-Holland|Limburg
-  exclude_neutral: true
+  province_filter_regex: ""
+  exclude_neutral: false
+  sentence_sample_size: 500
+  paragraph_sample_size: 100
+  sample_random_state: 42
 
 ollama:
   url: http://localhost:11434/api/generate
@@ -23,6 +31,8 @@ sentiment_ollama:
 
 online_geocoding:
   country_codes: ""
+  country_codes_by_language:
+    german: de,at,ch,li
   user_agent: absa-geo-mapper
   save_every: 50
   print_every: 25

@@ -1000,7 +1000,7 @@ def plot_locations_interactive(
     provinces = provinces.to_crs("EPSG:4326")
     provinces = provinces.reset_index(drop=True).copy()
     provinces["_feature_id"] = provinces.index.astype(str)
-    provinces_json = json.loads(provinces.to_json())
+    provinces_json = json.loads(provinces.to_json(default=str))
 
     marker_colors = {
         "negative": "#D55E00",

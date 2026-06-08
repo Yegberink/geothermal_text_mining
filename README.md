@@ -1,6 +1,6 @@
 # Geothermal Text Mining Workflow
 
-This repository contains a Snakemake workflow for mining geothermal-related newspaper text, extracting and geocoding paragraph-level locations, assigning frames and sentiment at sentence level, aggregating the results to Dutch administrative areas, and preparing annotation data for manual review.
+This repository contains a Snakemake workflow for mining geothermal-related newspaper text, extracting and geocoding paragraph-level locations, assigning frames and sentiment at sentence level, aggregating the results to language-specific administrative areas, and preparing annotation data for manual review.
 
 The workflow is paragraph-based for keyword prefiltering, geothermal relevance, location extraction, and geocoding. It is sentence-based for frame detection, sentiment, visualisation inputs, and annotation. Sentence rows inherit the paragraph-level location and geometry fields.
 
@@ -47,22 +47,24 @@ In short, the current workflow is:
 - `Snakefile`
   Workflow definition.
 - `config/config.yaml`
-  Central configuration for paths, language, Ollama models, Ollama sentiment settings, geocoding settings, and annotation export filters.
+  Central configuration for paths, active app language, workflow languages, language-specific geography labels, Ollama models, geocoding settings, and annotation export filters.
 - `pixi.toml`
   Environment definition for Python, Snakemake, geopandas, transformers, torch, plotly, and the rest of the pipeline dependencies.
 
 ## Inputs
 
-The workflow expects:
+The workflow expects one folder per language:
 
 - raw newspaper `.rtf` files in `input_data/{language}/`
 - a newspaper-region mapping CSV in `data/{language}/newspaper_region_mapping.csv`
 - municipality and province layers in `data/{language}/`
 - a frame/topic keyword file in `vocab/{language}/keywords_topics.csv`
 
+With `languages: auto`, Snakemake discovers every `vocab/{language}/keywords_topics.csv` that also has `input_data/{language}/`.
+
 ## Key outputs
 
-With `language: dutch`, the main outputs are written under `output/dutch/`.
+The main outputs are written under `output/{language}/` for every discovered workflow language.
 
 ### Main intermediate outputs
 
@@ -79,7 +81,7 @@ With `language: dutch`, the main outputs are written under `output/dutch/`.
 
 ### Default final targets
 
-Running `snakemake` with no explicit target builds:
+Running `snakemake` with no explicit target builds these outputs for every discovered language:
 
 - `output/{language}/text/sentences_with_categories_admin.csv`
 - `output/{language}/text/sentences_with_categories_admin.gpkg`
@@ -92,6 +94,9 @@ Running `snakemake` with no explicit target builds:
 If `make_annotation_df: true`, it also builds:
 
 - `annotation/{language}/sentences_for_annotation.csv`
+- `annotation/sentences_for_annotation_all_languages.csv`
+
+By default each language-specific evaluation file contains separate random samples for each evaluation: `500` sentence rows for frame identification, `500` sentence rows for sentiment classification, and `100` paragraph rows for geothermal relevance.
 
 ## Models used
 
@@ -110,6 +115,10 @@ Sentence-level sentiment is currently handled by:
 - `llama3.1:8b`
 
 using a zero-shot prompt. This is configured in `config/config.yaml` under `sentiment_ollama`.
+
+## Geographic scope
+
+The workflow separates text language from geographic scope. For German-language text, `config/config.yaml` uses `German-speaking countries` and online geocoding is biased to `de,at,ch,li`. The currently available German admin layers are still Germany-specific; Austrian, Swiss, or Liechtenstein locations may geocode online but will not receive full region polygons until matching region data is added under `data/german/`.
 
 ## Installation
 
@@ -133,6 +142,8 @@ Run the default workflow:
 pixi run snakemake --cores 4
 ```
 
+This runs all languages discovered from `vocab/` and creates the combined annotation CSV at the end.
+
 Build a specific target:
 
 ```bash
@@ -149,7 +160,7 @@ pixi run snakemake --cores 4 annotation/dutch/sentences_for_annotation.csv
 
 The annotation app lives in `annotation/app.py`.
 
-It uses the generated sentence-level annotation CSV and stores reviewer answers in a local SQLite database.
+It uses the generated mixed sentence/paragraph evaluation CSV and stores reviewer answers in a local SQLite database.
 
 Run it with:
 
@@ -157,14 +168,36 @@ Run it with:
 streamlit run annotation/app.py
 ```
 
-The current annotation flow supports review of:
+The current annotation flow supports three selectable evaluations:
 
-- geothermal relevance
-- sentiment correctness
-- frame correctness
-- location correctness
+- paragraph geothermal relevance
+- sentence frame correctness
+- sentence sentiment correctness
+- configurable workflow questions
 
-The app shows the sentence, paragraph context, predicted frame(s), predicted sentiment, and extracted location, then walks through the review questions step by step.
+The app lets you select the language and evaluation, shows each sampled sentence or paragraph with the relevant model output, and asks the review question for that evaluation. It reports accuracy for the selected queue from the saved annotations. Frame-identification corrections are also exported to the same keyword-review CSV used by `scripts/update_keywords_framework.py`, so the framework can be improved from the evaluation workflow.
+
+The app uses `annotation/{language}/sentences_for_annotation.csv` when available, and can also read language rows from `annotation/sentences_for_annotation_all_languages.csv`.
+
+Additional workflow questions can be added under `annotation.workflow_questions` in `config/config.yaml`. Supported question types are `yes_no`, `select`, `radio`, `multiselect`, `text`, and `textarea`; answers are saved in the annotation database as `workflow_answers_json`.
+
+```yaml
+annotation:
+  workflow_questions:
+    - id: article_level_match
+      prompt: "Does the workflow identify the correct article-level geothermal context?"
+      type: yes_no
+      required: true
+    - id: failure_reason
+      prompt: "If the workflow output is wrong, what is the main failure type?"
+      type: select
+      required: false
+      options:
+        - Keyword filter
+        - Geothermal classification
+        - Frame matching
+        - Sentiment classification
+```
 
 ## Sentiment model assessment
 

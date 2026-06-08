@@ -24,6 +24,48 @@ def pick_col_by_regex(cols, patterns):
     return None
 
 
+def pick_admin_col(cols, exact_names, patterns):
+    cols_l = [c.lower() for c in cols]
+    exact_l = [name.lower() for name in exact_names]
+    for target in exact_l:
+        for c, cl in zip(cols, cols_l):
+            if cl == target:
+                return c
+    return pick_col_by_regex(cols, patterns)
+
+
+def pick_municipality_name_col(cols):
+    return pick_admin_col(
+        cols,
+        exact_names=["statnaam", "name", "com_name", "gen"],
+        patterns=[r"gemeente.*naam", r"com.*name", r"\bnaam\b", r"name"],
+    )
+
+
+def pick_municipality_code_col(cols):
+    return pick_admin_col(
+        cols,
+        exact_names=["statcode", "com_istat_code", "ags", "ars"],
+        patterns=[r"gm_.*code", r"gemeente.*code", r"com.*istat.*code", r"com.*code", r"\bcode\b"],
+    )
+
+
+def pick_province_name_col(cols):
+    return pick_admin_col(
+        cols,
+        exact_names=["statnaam", "prov_name", "name", "gen"],
+        patterns=[r"provincie.*naam", r"prov.*name", r"\bnaam\b", r"name"],
+    )
+
+
+def pick_province_code_col(cols):
+    return pick_admin_col(
+        cols,
+        exact_names=["statcode", "prov_istat_code", "prov_acr", "lkz", "sn_l", "ags", "ars"],
+        patterns=[r"pv_.*code", r"provincie.*code", r"prov.*istat.*code", r"prov.*acr", r"\bcode\b"],
+    )
+
+
 def norm(value: object) -> str:
     text = str(value or "").strip().lower()
     text = unicodedata.normalize("NFKD", text)
@@ -139,10 +181,10 @@ def main():
     if text_gdf.crs is None:
         raise ValueError("Input layer has no CRS.")
 
-    prov_name_col = pick_col_by_regex(prov.columns, [r"statnaam", r"provincie.*naam", r"prov.*name", r"\bnaam\b", r"name"])
-    muni_name_col = pick_col_by_regex(muni.columns, [r"statnaam", r"gemeente.*naam", r"com.*name", r"\bnaam\b", r"name"])
-    prov_code_col = pick_col_by_regex(prov.columns, [r"statcode", r"pv_.*code", r"provincie.*code", r"prov.*istat.*code", r"prov.*acr", r"\bcode\b"])
-    muni_code_col = pick_col_by_regex(muni.columns, [r"statcode", r"gm_.*code", r"gemeente.*code", r"com.*istat.*code", r"com.*code", r"\bcode\b"])
+    prov_name_col = pick_province_name_col(prov.columns)
+    muni_name_col = pick_municipality_name_col(muni.columns)
+    prov_code_col = pick_province_code_col(prov.columns)
+    muni_code_col = pick_municipality_code_col(muni.columns)
 
     if prov_name_col is None:
         raise ValueError("Could not detect province name column.")

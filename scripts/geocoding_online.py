@@ -105,6 +105,32 @@ def pick_col_by_regex(cols, patterns):
     return None
 
 
+def pick_admin_col(cols, exact_names, patterns):
+    cols_l = [c.lower() for c in cols]
+    exact_l = [name.lower() for name in exact_names]
+    for target in exact_l:
+        for c, cl in zip(cols, cols_l):
+            if cl == target:
+                return c
+    return pick_col_by_regex(cols, patterns)
+
+
+def pick_municipality_name_col(cols):
+    return pick_admin_col(
+        cols,
+        exact_names=["statnaam", "name", "com_name", "gen"],
+        patterns=[r"gemeente.*naam", r"gm_.*naam", r"com.*name", r"\bname\b", r"\bnaam\b"],
+    )
+
+
+def pick_province_name_col(cols):
+    return pick_admin_col(
+        cols,
+        exact_names=["statnaam", "prov_name", "name", "gen"],
+        patterns=[r"provincie.*naam", r"pv_.*naam", r"prov.*name", r"\bname\b", r"\bnaam\b"],
+    )
+
+
 def projected_crs_for(gdf: gpd.GeoDataFrame):
     try:
         return gdf.estimate_utm_crs()
@@ -236,14 +262,10 @@ def main() -> None:
     muni_wgs84 = with_wgs84_centroids(muni_gdf)
     prov_wgs84 = with_wgs84_centroids(prov_gdf)
 
-    muni_name_col = pick_col_by_regex(
-        muni_gdf.columns, [r"statnaam", r"gemeente.*naam", r"gm_.*naam", r"com.*name", r"\bname\b", r"\bnaam\b"]
-    )
-    prov_name_col = pick_col_by_regex(
-        prov_gdf.columns, [r"statnaam", r"provincie.*naam", r"pv_.*naam", r"prov.*name", r"\bname\b", r"\bnaam\b"]
-    )
+    muni_name_col = pick_municipality_name_col(muni_gdf.columns)
+    prov_name_col = pick_province_name_col(prov_gdf.columns)
     if muni_name_col is None or prov_name_col is None:
-        raise ValueError("Could not detect municipality/province name columns in CBS GeoPackage.")
+        raise ValueError("Could not detect municipality/province name columns in administrative GeoPackage.")
 
     country_poly = unary_union(prov_gdf.geometry.values)
     country_poly_wgs84 = gpd.GeoSeries([country_poly], crs=prov_gdf.crs).to_crs("EPSG:4326").iloc[0]

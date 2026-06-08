@@ -106,6 +106,48 @@ def pick_col_by_regex(cols, patterns):
     return None
 
 
+def pick_admin_col(cols, exact_names, patterns):
+    cols_l = [c.lower() for c in cols]
+    exact_l = [name.lower() for name in exact_names]
+    for target in exact_l:
+        for c, cl in zip(cols, cols_l):
+            if cl == target:
+                return c
+    return pick_col_by_regex(cols, patterns)
+
+
+def pick_municipality_name_col(cols):
+    return pick_admin_col(
+        cols,
+        exact_names=["statnaam", "name", "com_name", "gen"],
+        patterns=[r"gemeente.*naam", r"gm_.*naam", r"com.*name", r"\bname\b", r"\bnaam\b"],
+    )
+
+
+def pick_municipality_code_col(cols):
+    return pick_admin_col(
+        cols,
+        exact_names=["statcode", "com_istat_code", "ags", "ars"],
+        patterns=[r"gemeente.*code", r"gm_.*code", r"com.*istat.*code", r"com.*code", r"\bcode\b"],
+    )
+
+
+def pick_province_name_col(cols):
+    return pick_admin_col(
+        cols,
+        exact_names=["statnaam", "prov_name", "name", "gen"],
+        patterns=[r"provincie.*naam", r"pv_.*naam", r"prov.*name", r"\bname\b", r"\bnaam\b"],
+    )
+
+
+def pick_province_code_col(cols):
+    return pick_admin_col(
+        cols,
+        exact_names=["statcode", "prov_istat_code", "prov_acr", "lkz", "sn_l", "ags", "ars"],
+        patterns=[r"pv_.*code", r"provincie.*code", r"prov.*istat.*code", r"prov.*acr", r"\bcode\b"],
+    )
+
+
 def projected_crs_for(gdf: gpd.GeoDataFrame):
     try:
         return gdf.estimate_utm_crs()
@@ -186,25 +228,13 @@ def main():
     if muni_gdf.crs is None or prov_gdf.crs is None:
         raise ValueError("CBS layers must have CRS set.")
 
-    muni_name_col = pick_col_by_regex(
-        muni_gdf.columns,
-        [r"statnaam", r"gemeente.*naam", r"gm_.*naam", r"com.*name", r"\bname\b", r"\bnaam\b"],
-    )
-    muni_code_col = pick_col_by_regex(
-        muni_gdf.columns,
-        [r"statcode", r"gemeente.*code", r"gm_.*code", r"com.*istat.*code", r"com.*code", r"\bcode\b"],
-    )
-    prov_name_col = pick_col_by_regex(
-        prov_gdf.columns,
-        [r"statnaam", r"provincie.*naam", r"pv_.*naam", r"prov.*name", r"\bname\b", r"\bnaam\b"],
-    )
-    prov_code_col = pick_col_by_regex(
-        prov_gdf.columns,
-        [r"statcode", r"provincie.*code", r"pv_.*code", r"prov.*istat.*code", r"prov.*acr", r"\bcode\b"],
-    )
+    muni_name_col = pick_municipality_name_col(muni_gdf.columns)
+    muni_code_col = pick_municipality_code_col(muni_gdf.columns)
+    prov_name_col = pick_province_name_col(prov_gdf.columns)
+    prov_code_col = pick_province_code_col(prov_gdf.columns)
     if muni_name_col is None or prov_name_col is None:
         raise ValueError(
-            "Could not detect CBS name columns.\n"
+            "Could not detect administrative name columns.\n"
             f"Municipality columns: {list(muni_gdf.columns)}\n"
             f"Province columns: {list(prov_gdf.columns)}"
         )
