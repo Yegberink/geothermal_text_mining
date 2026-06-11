@@ -25,6 +25,7 @@ geo_partial_results.csv
 geo_class_partial_results.csv
 geo_cache.jsonl
 geo_class_cache.jsonl
+writing/
 
 # Large dataset files that should not be tracked
 data/*.gpkg

@@ -155,6 +155,10 @@ def _rtf_raw_article_args(language):
     )
 
 
+def _shell_join(values):
+    return " ".join(shlex.quote(str(value)) for value in values)
+
+
 PER_LANGUAGE_TARGET_KEYS = [
     "sentences_with_categories_admin_csv",
     "sentences_with_categories_admin_gpkg",
@@ -172,11 +176,22 @@ PER_LANGUAGE_TARGET_KEYS = [
     "locations_map_html",
 ]
 
+OVERARCHING_TARGETS = [
+    "output/figures/all_languages_province_sentiment_balance.png",
+    "output/figures/all_languages_province_sentiment_table.csv",
+    "output/figures/all_languages_frames_sentiment_distribution.png",
+    "output/figures/all_languages_frames_sentiment_table.csv",
+    "output/figures/all_languages_frames_country_sentiment_balance.png",
+    "output/figures/all_languages_frames_country_sentiment_balance_table.csv",
+    "output/figures/all_languages_province_sentiment_map.png",
+]
+
 ALL_TARGETS = [
     path_for(language, key)
     for language in LANGUAGES
     for key in PER_LANGUAGE_TARGET_KEYS
 ]
+ALL_TARGETS.extend(OVERARCHING_TARGETS)
 if MAKE_ANNOTATION_DF:
     ALL_TARGETS.extend(path_for(language, "annotation_sentences_csv") for language in LANGUAGES)
     ALL_TARGETS.append("annotation/sentences_for_annotation_all_languages.csv")
@@ -588,12 +603,42 @@ rule visualize_absa_results:
         """
 
 
+rule visualize_overarching_results:
+    input:
+        admin_csvs=expand(pattern_for("sentences_with_categories_admin_csv"), language=LANGUAGES),
+        province_gpkgs=expand(pattern_for("province_gpkg"), language=LANGUAGES),
+        script=str(PROJECT_DIR / "scripts" / "visualize_overarching_results.py"),
+    output:
+        balance="output/figures/all_languages_province_sentiment_balance.png",
+        province_table="output/figures/all_languages_province_sentiment_table.csv",
+        frames="output/figures/all_languages_frames_sentiment_distribution.png",
+        frames_table="output/figures/all_languages_frames_sentiment_table.csv",
+        frame_country_balance="output/figures/all_languages_frames_country_sentiment_balance.png",
+        frame_country_balance_table="output/figures/all_languages_frames_country_sentiment_balance_table.csv",
+        sentiment_map="output/figures/all_languages_province_sentiment_map.png",
+    params:
+        output_dir="output/figures",
+        languages=_shell_join(LANGUAGES),
+        countries=_shell_join(country_for(language) for language in LANGUAGES),
+    shell:
+        """
+        {PYTHON} scripts/visualize_overarching_results.py \
+          --project-dir {PROJECT_DIR} \
+          --languages {params.languages} \
+          --countries {params.countries} \
+          --admin-csvs {input.admin_csvs} \
+          --province-gpkgs {input.province_gpkgs} \
+          --output-dir {params.output_dir}
+        """
+
+
 rule make_annotation_df:
     input:
         sentences_csv=pattern_for("sentence_locations_csv"),
         sentiment_csv=pattern_for("sentence_sentiment_csv"),
         keywords_csv=pattern_for("keywords_topics_csv"),
         paragraph_geothermal_csv=pattern_for("paragraph_geothermal_csv"),
+        paragraph_location_csv=pattern_for("paragraphs_with_geo_csv"),
     output:
         pattern_for("annotation_sentences_csv"),
     params:
@@ -601,6 +646,10 @@ rule make_annotation_df:
         exclude_neutral=ANNOTATION.get("exclude_neutral", True),
         sentence_sample_size=ANNOTATION.get("sentence_sample_size", 500),
         paragraph_sample_size=ANNOTATION.get("paragraph_sample_size", 100),
+        paragraph_location_sample_size=ANNOTATION.get(
+            "paragraph_location_sample_size",
+            ANNOTATION.get("paragraph_sample_size", 100),
+        ),
         random_state=ANNOTATION.get("sample_random_state", 42),
     shell:
         """
@@ -608,6 +657,7 @@ rule make_annotation_df:
           --project-dir {PROJECT_DIR} \
           --input-csv {input.sentences_csv} \
           --paragraph-geothermal-csv {input.paragraph_geothermal_csv} \
+          --paragraph-location-csv {input.paragraph_location_csv} \
           --sentiment-csv {input.sentiment_csv} \
           --keywords-csv {input.keywords_csv} \
           --output-csv {output} \
@@ -615,6 +665,7 @@ rule make_annotation_df:
           --exclude-neutral {params.exclude_neutral} \
           --sentence-sample-size {params.sentence_sample_size} \
           --paragraph-sample-size {params.paragraph_sample_size} \
+          --paragraph-location-sample-size {params.paragraph_location_sample_size} \
           --random-state {params.random_state}
         """
 

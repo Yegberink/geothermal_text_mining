@@ -65,6 +65,7 @@ With `languages: auto`, Snakemake discovers every `vocab/{language}/keywords_top
 ## Key outputs
 
 The main outputs are written under `output/{language}/` for every discovered workflow language.
+Cross-language overview figures are written under `output/figures/`.
 
 ### Main intermediate outputs
 
@@ -90,13 +91,20 @@ Running `snakemake` with no explicit target builds these outputs for every disco
 - `output/{language}/figures/provinces_sentiment_distribution.png`
 - `output/{language}/figures/categories_sentiment_distribution.png`
 - `output/{language}/figures/locations_map.html`
+- `output/figures/all_languages_province_sentiment_table.csv`
+- `output/figures/all_languages_province_sentiment_balance.png`
+- `output/figures/all_languages_frames_sentiment_table.csv`
+- `output/figures/all_languages_frames_sentiment_distribution.png`
+- `output/figures/all_languages_frames_country_sentiment_balance_table.csv`
+- `output/figures/all_languages_frames_country_sentiment_balance.png`
+- `output/figures/all_languages_province_sentiment_map.png`
 
 If `make_annotation_df: true`, it also builds:
 
 - `annotation/{language}/sentences_for_annotation.csv`
 - `annotation/sentences_for_annotation_all_languages.csv`
 
-By default each language-specific evaluation file contains separate random samples for each evaluation: `500` sentence rows for frame identification, `500` sentence rows for sentiment classification, and `100` paragraph rows for geothermal relevance.
+By default each language-specific evaluation file contains separate random samples for each evaluation: `500` sentence rows for frame identification, `500` sentence rows for sentiment classification, `100` paragraph rows for geothermal relevance, and `100` geothermal paragraph rows for location extraction.
 
 ## Models used
 
@@ -168,9 +176,10 @@ Run it with:
 streamlit run annotation/app.py
 ```
 
-The current annotation flow supports three selectable evaluations:
+The current annotation flow supports four selectable evaluations:
 
 - paragraph geothermal relevance
+- paragraph location extraction
 - sentence frame correctness
 - sentence sentiment correctness
 - configurable workflow questions

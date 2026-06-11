@@ -18,6 +18,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--input-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
     ap.add_argument("--paragraph-input-csv", type=str, default="")
     ap.add_argument("--paragraph-geothermal-csv", type=str, default="")
+    ap.add_argument("--paragraph-location-csv", type=str, default="")
     ap.add_argument("--sentiment-csv", type=str, default="")
     ap.add_argument("--keywords-csv", type=str, default="")
     ap.add_argument("--output-csv", type=str, default="annotation/sentences_for_annotation.csv")
@@ -25,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--exclude-neutral", type=str, default="True")
     ap.add_argument("--sentence-sample-size", type=int, default=500)
     ap.add_argument("--paragraph-sample-size", type=int, default=100)
+    ap.add_argument("--paragraph-location-sample-size", type=int, default=None)
     ap.add_argument("--random-state", type=int, default=42)
     return ap.parse_args()
 
@@ -134,6 +136,11 @@ def sample_frame(df: pd.DataFrame, n: int, random_state: int) -> pd.DataFrame:
     return df.sample(n=n, random_state=random_state).copy()
 
 
+def has_valid_location(series: pd.Series) -> pd.Series:
+    values = series.fillna("").astype(str).str.strip()
+    return ~values.str.lower().isin({"", "none", "nan", "null"})
+
+
 def prepare_sentence_items(
     df: pd.DataFrame,
     province_filter_regex: str,
@@ -189,6 +196,7 @@ def prepare_paragraph_items(
     sample_size: int,
     random_state: int,
     stage: str,
+    require_location: bool = False,
 ) -> pd.DataFrame:
     uid_col = "paragraph_uid" if "paragraph_uid" in df.columns else ("uid" if "uid" in df.columns else None)
     text_col = "paragraph_text" if "paragraph_text" in df.columns else None
@@ -196,6 +204,11 @@ def prepare_paragraph_items(
         raise ValueError("Paragraph input CSV must include paragraph_uid or uid, plus paragraph_text.")
 
     out = df.copy()
+    if require_location:
+        if "llm_location" not in out.columns:
+            return out.iloc[0:0].copy()
+        out = out[has_valid_location(out["llm_location"])].copy()
+
     if province_filter_regex and "province_name" in out.columns:
         out = out[out["province_name"].astype(str).str.contains(province_filter_regex, case=False, na=False)].copy()
 
@@ -227,10 +240,16 @@ def main() -> None:
     input_csv = Path(args.input_csv)
     paragraph_input_csv = Path(args.paragraph_input_csv) if args.paragraph_input_csv else None
     paragraph_geothermal_csv = Path(args.paragraph_geothermal_csv) if args.paragraph_geothermal_csv else paragraph_input_csv
+    paragraph_location_csv = Path(args.paragraph_location_csv) if args.paragraph_location_csv else None
     sentiment_csv = Path(args.sentiment_csv) if args.sentiment_csv else None
     keywords_csv = Path(args.keywords_csv) if args.keywords_csv else None
     output_csv = Path(args.output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
+    paragraph_location_sample_size = (
+        args.paragraph_location_sample_size
+        if args.paragraph_location_sample_size is not None
+        else args.paragraph_sample_size
+    )
 
     frame_items = prepare_sentence_items(
         pd.read_csv(input_csv),
@@ -264,6 +283,17 @@ def main() -> None:
             stage="paragraph",
         )
         frames.append(paragraph_geothermal_items)
+
+    if paragraph_location_csv is not None:
+        paragraph_location_items = prepare_paragraph_items(
+            pd.read_csv(paragraph_location_csv),
+            province_filter_regex=args.province_filter_regex,
+            sample_size=paragraph_location_sample_size,
+            random_state=args.random_state + 20,
+            stage="paragraph_location",
+            require_location=True,
+        )
+        frames.append(paragraph_location_items)
 
     out = pd.concat(frames, ignore_index=True, sort=False)
     out["annotation_id"] = range(1, len(out) + 1)

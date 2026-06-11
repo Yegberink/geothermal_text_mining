@@ -25,7 +25,7 @@ SENTIMENT_COLORS = {
     "positive": "#009E73",
 }
 DESCRIPTIVE_BLUE = "#3f6f8f"
-MIN_PROVINCE_SENTENCES = 31
+MIN_PROVINCE_SENTENCES = 46
 LOCATION_PROVINCE_OVERRIDES = {}
 
 
@@ -266,7 +266,7 @@ def plot_province_sentiment_balance(province_tbl: pd.DataFrame, out_path: Path) 
     )
 
     ax.axvline(0, color="black", linewidth=0.8)
-    ax.set_xlabel("Percentage of sentences; diamond = positive - negative")
+    ax.set_xlabel("Percentage of sentences (%)")
 
     for spine in ax.spines.values():
         spine.set_visible(True)

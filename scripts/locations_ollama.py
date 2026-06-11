@@ -12,7 +12,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 import pandas as pd
 import requests
@@ -26,6 +26,14 @@ SYSTEM = (
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 ROW_UID_COL = "_row_uid"
+NO_LOCATION_VALUES = {"", "none", "nan", "null"}
+LOCATION_TRACKING_DEFAULTS = {
+    "llm_paragraph_location_raw": None,
+    "llm_paragraph_returned_none": None,
+    "llm_document_location_raw": None,
+    "llm_document_returned_none": None,
+    "llm_country_fallback_applied": False,
+}
 
 
 def _fingerprint(text: str, region: str, country: str) -> str:
@@ -36,6 +44,92 @@ def _fingerprint(text: str, region: str, country: str) -> str:
     h.update(b"\n")
     h.update((text or "").encode("utf-8"))
     return h.hexdigest()
+
+
+def _document_fingerprint(document_key: str, text: str, region: str, country: str) -> str:
+    h = hashlib.sha256()
+    h.update(b"document_location\n")
+    h.update((document_key or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((region or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((country or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((text or "").encode("utf-8"))
+    return h.hexdigest()
+
+
+def is_valid_location(value: object) -> bool:
+    return str(value or "").strip().lower() not in NO_LOCATION_VALUES
+
+
+def normalize_location_key(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def normalize_location_result(obj: dict) -> dict:
+    loc = obj.get("location", "NONE") or "NONE"
+    gran = obj.get("granularity", "none") or "none"
+    conf = obj.get("confidence", 0.0) or 0.0
+    try:
+        conf = float(conf)
+    except Exception:
+        conf = 0.0
+    conf = max(0.0, min(1.0, conf))
+
+    reason = obj.get("reasoning_short", "") or ""
+    return {
+        "location": loc,
+        "granularity": gran,
+        "confidence": conf,
+        "reasoning_short": reason,
+    }
+
+
+def parse_location_response(out: str) -> dict:
+    out = str(out or "").strip()
+    start = out.find("{")
+    end = out.rfind("}")
+    if start == -1 or end == -1:
+        return {
+            "location": "NONE",
+            "granularity": "none",
+            "confidence": 0.0,
+            "reasoning_short": "No JSON returned.",
+        }
+
+    try:
+        obj = json.loads(out[start:end + 1])
+    except json.JSONDecodeError:
+        return {
+            "location": "NONE",
+            "granularity": "none",
+            "confidence": 0.0,
+            "reasoning_short": "Invalid JSON.",
+        }
+    return normalize_location_result(obj)
+
+
+def ensure_location_tracking_columns(out: pd.DataFrame) -> pd.DataFrame:
+    for col, default in LOCATION_TRACKING_DEFAULTS.items():
+        if col not in out.columns:
+            out[col] = default
+    return out
+
+
+def backfill_missing_paragraph_raw_columns(out: pd.DataFrame) -> pd.DataFrame:
+    out = ensure_location_tracking_columns(out)
+    if "llm_status" in out.columns:
+        completed = out["llm_status"].isin(["ok", "empty"])
+    else:
+        completed = pd.Series(True, index=out.index)
+    missing_raw = out["llm_paragraph_location_raw"].isna() & completed
+    if missing_raw.any():
+        out.loc[missing_raw, "llm_paragraph_location_raw"] = out.loc[missing_raw, "llm_location"]
+        out.loc[missing_raw, "llm_paragraph_returned_none"] = ~out.loc[
+            missing_raw, "llm_location"
+        ].map(is_valid_location)
+    return out
 
 
 def make_uid(row: Dict[str, object]) -> str:
@@ -94,8 +188,6 @@ Context:
 Rules:
 - Return exactly ONE location name, or "NONE" if no clear primary location.
 - Prefer the most specific location that is clearly the focus (site/city/municipality).
-- If the paragraph is general or national-level, return "{country}".
-- If no subnational location is stated but the paragraph clearly refers to the country as a whole, return "{country}".
 - Do NOT list multiple places.
 - Output MUST be valid JSON only, with keys:
   location, granularity, confidence, reasoning_short
@@ -118,43 +210,217 @@ Paragraph:
     r = requests.post(ollama_url, json=payload, timeout=120)
     r.raise_for_status()
     out = (r.json().get("response") or "").strip()
+    return parse_location_response(out)
 
-    start = out.find("{")
-    end = out.rfind("}")
-    if start == -1 or end == -1:
-        return {
-            "location": "NONE",
-            "granularity": "none",
-            "confidence": 0.0,
-            "reasoning_short": "No JSON returned.",
-        }
 
-    try:
-        obj = json.loads(out[start:end + 1])
-    except json.JSONDecodeError:
-        return {
-            "location": "NONE",
-            "granularity": "none",
-            "confidence": 0.0,
-            "reasoning_short": "Invalid JSON.",
-        }
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((requests.Timeout, requests.ConnectionError, requests.HTTPError)),
+)
+def llm_document_primary_location(
+    document_text: str,
+    newspaper_region_name: str,
+    country: str,
+    ollama_url: str,
+    model: str,
+) -> dict:
+    prompt = f"""
+Task: Determine the ONE primary geographic location this full newspaper document is mainly about.
 
-    loc = obj.get("location", "NONE") or "NONE"
-    gran = obj.get("granularity", "none") or "none"
-    conf = obj.get("confidence", 0.0) or 0.0
-    try:
-        conf = float(conf)
-    except Exception:
-        conf = 0.0
-    conf = max(0.0, min(1.0, conf))
+Context:
+- The newspaper's coverage region is: {newspaper_region_name}
+- The document contains one or more paragraphs selected for geothermal-energy processing.
+- Primary country of interest: {country}
 
-    reason = obj.get("reasoning_short", "") or ""
-    return {
-        "location": loc,
-        "granularity": gran,
-        "confidence": conf,
-        "reasoning_short": reason,
+Rules:
+- Return exactly ONE location name, or "NONE" if no clear primary location.
+- Prefer the most specific location that is clearly the focus (site/city/municipality).
+- Do NOT list multiple places.
+- Output MUST be valid JSON only, with keys:
+  location, granularity, confidence, reasoning_short
+
+Granularity must be one of: site, city, municipality, province, country, none
+Confidence must be a number from 0 to 1.
+
+Document:
+{document_text}
+""".strip()
+
+    payload = {
+        "model": model,
+        "system": SYSTEM,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0.0, "num_predict": 200},
     }
+
+    r = requests.post(ollama_url, json=payload, timeout=120)
+    r.raise_for_status()
+    out = (r.json().get("response") or "").strip()
+    return parse_location_response(out)
+
+
+def document_key_for_row(row: pd.Series) -> str:
+    body_hash = str(row.get("body_hash", "") or "").strip()
+    if body_hash and body_hash.lower() not in NO_LOCATION_VALUES:
+        return body_hash
+    return "||".join(
+        [
+            str(row.get("source", "") or ""),
+            str(row.get("document_title", "") or ""),
+            str(row.get("publish_date", "") or ""),
+        ]
+    )
+
+
+def document_text_for_group(group: pd.DataFrame, text_col: str) -> str:
+    if "body" in group.columns:
+        for value in group["body"].dropna().astype(str):
+            text = value.strip()
+            if text and text.lower() not in NO_LOCATION_VALUES:
+                return text
+
+    ordered = group.copy()
+    if "paragraph_id" in ordered.columns:
+        ordered = ordered.sort_values("paragraph_id", kind="stable")
+    return "\n\n".join(ordered[text_col].fillna("").astype(str).str.strip().tolist()).strip()
+
+
+def location_payload_from_row(row: pd.Series) -> dict:
+    return {
+        "location": row.get("llm_location", "NONE") or "NONE",
+        "granularity": row.get("llm_granularity", "none") or "none",
+        "confidence": row.get("llm_confidence", 0.0) or 0.0,
+        "reasoning_short": row.get("llm_reasoning_short", "") or "",
+    }
+
+
+def apply_location_payload(
+    out: pd.DataFrame,
+    idxs,
+    payload: dict,
+    source: str,
+    review_flag: bool,
+    review_reason: Optional[str],
+) -> None:
+    result = normalize_location_result(payload)
+    out.loc[idxs, "llm_location"] = result["location"]
+    out.loc[idxs, "llm_granularity"] = result["granularity"]
+    out.loc[idxs, "llm_confidence"] = result["confidence"]
+    out.loc[idxs, "llm_reasoning_short"] = result["reasoning_short"]
+    out.loc[idxs, "llm_status"] = "ok"
+    out.loc[idxs, "llm_error"] = None
+    out.loc[idxs, "llm_location_source"] = source
+    out.loc[idxs, "llm_location_review_flag"] = bool(review_flag)
+    out.loc[idxs, "llm_location_review_reason"] = review_reason
+    out.loc[idxs, "llm_country_fallback_applied"] = source == "country_fallback"
+
+
+def country_fallback_payload(country: str) -> dict:
+    return {
+        "location": country,
+        "granularity": "country",
+        "confidence": 0.0,
+        "reasoning_short": "No clear paragraph- or document-level location; using country fallback.",
+    }
+
+
+def apply_document_location_fallback(
+    out: pd.DataFrame,
+    text_col: str,
+    region_col: str,
+    country: str,
+    document_location_resolver: Callable[[str, str, str], dict],
+) -> pd.DataFrame:
+    out = out.copy()
+    out = ensure_location_tracking_columns(out)
+    for col, default in [
+        ("llm_location_source", None),
+        ("llm_location_review_flag", False),
+        ("llm_location_review_reason", None),
+    ]:
+        if col not in out.columns:
+            out[col] = default
+
+    valid_mask = out["llm_location"].map(is_valid_location)
+    out.loc[valid_mask & out["llm_location_source"].isna(), "llm_location_source"] = "paragraph"
+    out.loc[valid_mask & out["llm_location_review_reason"].isna(), "llm_location_review_flag"] = False
+
+    if "llm_status" in out.columns:
+        completed_mask = out["llm_status"].isin(["ok", "empty"])
+    else:
+        completed_mask = pd.Series(True, index=out.index)
+    missing_mask = ~valid_mask & completed_mask
+    if not missing_mask.any():
+        return out
+
+    doc_keys = out.apply(document_key_for_row, axis=1)
+    fallback_count = 0
+    document_llm_count = 0
+    country_fallback_count = 0
+
+    for document_key, idxs in doc_keys.groupby(doc_keys).groups.items():
+        group = out.loc[list(idxs)]
+        if "llm_status" in group.columns:
+            group_completed = group["llm_status"].isin(["ok", "empty"])
+        else:
+            group_completed = pd.Series(True, index=group.index)
+        group_missing = group[~group["llm_location"].map(is_valid_location) & group_completed]
+        if group_missing.empty:
+            continue
+
+        group_valid = group[group["llm_location"].map(is_valid_location)]
+        unique_locations = {}
+        for _, valid_row in group_valid.iterrows():
+            key = normalize_location_key(valid_row.get("llm_location"))
+            unique_locations.setdefault(key, location_payload_from_row(valid_row))
+
+        missing_idxs = group_missing.index
+        if len(unique_locations) == 1:
+            payload = next(iter(unique_locations.values()))
+            apply_location_payload(
+                out,
+                missing_idxs,
+                payload,
+                source="document_single_location",
+                review_flag=False,
+                review_reason=None,
+            )
+            fallback_count += len(missing_idxs)
+            continue
+
+        review_reason = "multiple_document_locations" if unique_locations else "no_document_paragraph_locations"
+        document_text = document_text_for_group(group, text_col)
+        region_name = str(group.iloc[0].get(region_col, "") or country)
+        payload = document_location_resolver(document_text, region_name, str(document_key))
+        document_result = normalize_location_result(payload)
+        document_returned_none = not is_valid_location(document_result.get("location"))
+        source = "document_llm"
+        if document_returned_none:
+            payload = country_fallback_payload(country)
+            source = "country_fallback"
+            review_reason = f"{review_reason};document_llm_no_location"
+            country_fallback_count += len(missing_idxs)
+        else:
+            document_llm_count += len(missing_idxs)
+        apply_location_payload(
+            out,
+            missing_idxs,
+            payload,
+            source=source,
+            review_flag=True,
+            review_reason=review_reason,
+        )
+        out.loc[missing_idxs, "llm_document_location_raw"] = document_result["location"]
+        out.loc[missing_idxs, "llm_document_returned_none"] = bool(document_returned_none)
+
+    if fallback_count or document_llm_count or country_fallback_count:
+        print(f"[workflow_table] paragraph_locations_filled_from_document_single_location: {fallback_count}")
+        print(f"[workflow_table] paragraph_locations_filled_from_document_llm: {document_llm_count}")
+        print(f"[workflow_table] paragraph_locations_filled_from_country_fallback: {country_fallback_count}")
+    return out
 
 
 def save_checkpoint(out: pd.DataFrame, checkpoint_path: Path) -> None:
@@ -192,6 +458,10 @@ def restart_error_rows(out: pd.DataFrame) -> int:
             "llm_reasoning_short": None,
             "llm_status": None,
             "llm_error": None,
+            "llm_location_source": None,
+            "llm_location_review_flag": False,
+            "llm_location_review_reason": None,
+            **LOCATION_TRACKING_DEFAULTS,
         }
         for col, value in reset_values.items():
             out.loc[error_mask, col] = value
@@ -203,6 +473,11 @@ def write_final_csv_atomic(out: pd.DataFrame, out_csv: Path) -> None:
     tmp_path = out_csv.with_suffix(out_csv.suffix + ".tmp")
     out.to_csv(tmp_path, index=False, encoding="utf-8")
     tmp_path.replace(out_csv)
+
+
+def count_true(series: pd.Series) -> int:
+    truthy = series.fillna(False).map(lambda value: str(value).strip().lower() in {"1", "true", "yes", "y"})
+    return int(truthy.sum())
 
 
 def batch_primary_locations_resumable(
@@ -239,6 +514,7 @@ def batch_primary_locations_resumable(
         out["llm_reasoning_short"] = None
         out["llm_status"] = None
         out["llm_error"] = None
+        out = ensure_location_tracking_columns(out)
 
     cache: Dict[str, dict] = {}
     if cache_path.exists():
@@ -263,11 +539,38 @@ def batch_primary_locations_resumable(
         with cache_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"key": key, "value": value}, ensure_ascii=False) + "\n")
 
+    def resolve_document_location(document_text: str, region_name: str, document_key: str) -> dict:
+        if not str(document_text or "").strip():
+            return {
+                "location": "NONE",
+                "granularity": "none",
+                "confidence": 0.0,
+                "reasoning_short": "Empty document text.",
+            }
+
+        key = _document_fingerprint(document_key, document_text, region_name, country)
+        cached = cache_get(key)
+        if cached is not None:
+            return cached
+
+        res = llm_document_primary_location(
+            document_text=document_text,
+            newspaper_region_name=region_name,
+            country=country,
+            ollama_url=ollama_url,
+            model=model,
+        )
+        cache_put(key, res)
+        if sleep_s:
+            time.sleep(sleep_s)
+        return res
+
     def is_done(row) -> bool:
         st = row.get("llm_status")
         return st in ("ok", "empty")
 
     out = out.copy()
+    out = ensure_location_tracking_columns(out)
     if "llm_is_geothermal" in out.columns:
         out = out[out["llm_is_geothermal"].astype(str).str.upper() == "YES"].copy()
 
@@ -290,6 +593,8 @@ def batch_primary_locations_resumable(
                 out.at[i, "llm_confidence"] = 0.0
                 out.at[i, "llm_reasoning_short"] = "Empty paragraph."
                 out.at[i, "llm_error"] = None
+                out.at[i, "llm_paragraph_location_raw"] = "NONE"
+                out.at[i, "llm_paragraph_returned_none"] = None
                 processed_since_save += 1
                 continue
 
@@ -313,6 +618,8 @@ def batch_primary_locations_resumable(
                 out.at[i, "llm_reasoning_short"] = res.get("reasoning_short")
                 out.at[i, "llm_status"] = "ok"
                 out.at[i, "llm_error"] = None
+                out.at[i, "llm_paragraph_location_raw"] = res.get("location")
+                out.at[i, "llm_paragraph_returned_none"] = not is_valid_location(res.get("location"))
                 ok += 1
             except Exception as e:
                 out.at[i, "llm_status"] = "error"
@@ -338,6 +645,15 @@ def batch_primary_locations_resumable(
             + (f"- {partial_csv_path}\n" if partial_csv_path is not None else "")
         )
         raise
+
+    out = backfill_missing_paragraph_raw_columns(out)
+    out = apply_document_location_fallback(
+        out=out,
+        text_col=text_col,
+        region_col=region_col,
+        country=country,
+        document_location_resolver=resolve_document_location,
+    )
 
     save_checkpoint(out, checkpoint_path)
     write_partial_csv(out, partial_csv_path)
@@ -421,6 +737,21 @@ def main():
         print(f"[workflow_table] paragraphs_sent_to_location_extraction: {len(out)}")
         print(f"[workflow_table] paragraphs_with_extracted_location: {int(located.sum())}")
         print(f"[workflow_table] paragraphs_without_extracted_location: {int((~located).sum())}")
+    if "llm_paragraph_returned_none" in out.columns:
+        print(
+            "[workflow_table] paragraph_location_llm_none_responses: "
+            f"{count_true(out['llm_paragraph_returned_none'])}"
+        )
+    if "llm_document_returned_none" in out.columns:
+        print(
+            "[workflow_table] document_location_llm_none_responses: "
+            f"{count_true(out['llm_document_returned_none'])}"
+        )
+    if "llm_country_fallback_applied" in out.columns:
+        print(
+            "[workflow_table] paragraph_locations_filled_from_country_fallback_final: "
+            f"{count_true(out['llm_country_fallback_applied'])}"
+        )
 
 
 if __name__ == "__main__":
