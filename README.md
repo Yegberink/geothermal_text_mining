@@ -19,9 +19,9 @@ The current `Snakefile` runs the following pipeline:
 5. `scripts/locations_ollama.py`
    Uses Ollama to extract the primary location discussed in each geothermal paragraph.
 6. `scripts/geocoding_offline.py`
-   Matches the extracted paragraph location against municipality and province layers locally.
+   Matches the extracted paragraph location against `data/shapes.parquet` NUTS2/country shapes.
 7. `scripts/geocoding_online.py`
-   Optionally enriches unresolved or fine-grained paragraph locations through online geocoding.
+   Finalises paragraph geocoding offline: language-specific manual overrides, GeoNames country gazetteers, and any previously filled geocoder cache are applied to remaining unmatched locations. The step also writes unmatched-location and suggestion reports for review.
 8. `scripts/split_paragraphs_to_sentences.py`
    Splits geocoded paragraphs into sentence-level rows while keeping paragraph context and paragraph-level location/geometry output.
 9. `scripts/classification_sentences.py`
@@ -32,7 +32,7 @@ The current `Snakefile` runs the following pipeline:
 11. `scripts/classification_sentences.py`
    Builds the geocoded sentence-level frame outputs from inherited paragraph geometry and exports long/short tables plus a GeoPackage.
 12. `scripts/geographic_aggregation.py`
-    Adds municipality and province labels to the sentence-level geocoded outputs.
+    Assigns sentence-level geocoded outputs to NUTS2 regions from `data/shapes.parquet`.
 13. `scripts/visualize_absa_results.py`
     Produces the province-level and category-level sentiment figures plus an interactive HTML location map.
 14. `scripts/make_annotation_df.py`
@@ -40,7 +40,7 @@ The current `Snakefile` runs the following pipeline:
 
 In short, the current workflow is:
 
-`RTF files -> cleaned paragraphs -> paragraph keyword filter -> geothermal paragraph classification -> paragraph location extraction -> paragraph geocoding -> sentence split with inherited geo fields -> sentence frame matching -> sentence sentiment -> sentence frame outputs -> admin aggregation -> figures + interactive map + annotation export`
+`RTF files -> cleaned paragraphs -> paragraph keyword filter -> geothermal paragraph classification -> paragraph location extraction -> shapes-parquet paragraph geocoding -> offline final geocoding -> sentence split with inherited geo fields -> sentence frame matching -> sentence sentiment -> sentence frame outputs -> NUTS2 aggregation -> figures + interactive map + annotation export`
 
 ## Main files
 
@@ -56,9 +56,9 @@ In short, the current workflow is:
 The workflow expects one folder per language:
 
 - raw newspaper `.rtf` files in `input_data/{language}/`
-- a newspaper-region mapping CSV in `data/{language}/newspaper_region_mapping.csv`
-- municipality and province layers in `data/{language}/`
 - a frame/topic keyword file in `vocab/{language}/keywords_topics.csv`
+
+The shared administrative geography source is `data/shapes.parquet`, containing European country shapes and NUTS2 regions for the countries of interest. It is used for local matching, aggregation, and map visualisation. GeoNames country extracts live in `cache/geonames/` for offline point matching. Public online geocoders are not contacted by the default workflow.
 
 With `languages: auto`, Snakemake discovers every `vocab/{language}/keywords_topics.csv` that also has `input_data/{language}/`.
 
@@ -97,6 +97,10 @@ Running `snakemake` with no explicit target builds these outputs for every disco
 - `output/figures/all_languages_frames_sentiment_distribution.png`
 - `output/figures/all_languages_frames_country_sentiment_balance_table.csv`
 - `output/figures/all_languages_frames_country_sentiment_balance.png`
+- `output/figures/all_languages_extreme_province_frame_shares_table.csv`
+- `output/figures/frame_mentions_100pct_stacked_table.csv`
+- `output/figures/frame_mentions_100pct_stacked.png`
+- `output/figures/frame_mentions_100pct_stacked.pdf`
 - `output/figures/all_languages_province_sentiment_map.png`
 
 If `make_annotation_df: true`, it also builds:
@@ -126,7 +130,30 @@ using a zero-shot prompt. This is configured in `config/config.yaml` under `sent
 
 ## Geographic scope
 
-The workflow separates text language from geographic scope. For German-language text, `config/config.yaml` uses `German-speaking countries` and online geocoding is biased to `de,at,ch,li`. The currently available German admin layers are still Germany-specific; Austrian, Swiss, or Liechtenstein locations may geocode online but will not receive full region polygons until matching region data is added under `data/german/`.
+The workflow separates text language from geographic scope. For German-language text, `config/config.yaml` uses `German-speaking countries`; local shape matching, GeoNames, and manual overrides allow matches in Germany, Austria, and Switzerland. Country-level fallback values are kept at country scope rather than being forced into a NUTS2 region.
+
+## Geocoding Overrides and Online Cache
+
+Default geocoding first resolves locations deterministically with overrides and GeoNames, then builds one combined geocoding candidate table for any remaining locations. If `online_geocoding.provider` is set to `nominatim`, `opencage`, or `photon`, the normal Snakemake DAG fills one shared cache before final paragraph geocoding is consumed by downstream sentence splitting.
+
+Add manual geocoding decisions to:
+
+```text
+vocab/{language}/location_geocoding_overrides.csv
+```
+
+The override schema is:
+
+```text
+location,action,target_type,target_name,country_id,nuts2_id,lat,lon,notes
+```
+
+Supported actions are `nuts2`, `point`, and `ignore`. After each default run, review:
+
+- `cache/{language}/geocoding_unmatched.csv`
+- `cache/{language}/geocoding_suggestions.csv`
+
+The shared online cache is written to `cache/geocoder_cache.jsonl`. Per-language final geocoding also reads any older `cache/{language}/geocoder_cache.jsonl` files if they exist. For public Nominatim, set `online_geocoding.nominatim_policy_ack: true` after reviewing the OSMF usage policy: https://operations.osmfoundation.org/policies/nominatim/. Photon is an OSM-based public demo that may throttle or change without notice, Pelias is a self-hostable open-data geocoder, and OpenCage requires an API key.
 
 ## Installation
 

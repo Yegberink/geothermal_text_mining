@@ -1,128 +1,26 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
 import argparse
 import os
-import re
-import unicodedata
 from pathlib import Path
 
 import geopandas as gpd
+import pandas as pd
 
-from language_resources import load_location_province_overrides
+from shape_resources import load_shapes_parquet, nuts2_shapes
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
-LOCATION_PROVINCE_OVERRIDES = {}
 
-
-def pick_col_by_regex(cols, patterns):
-    import re
-
-    cols_l = [c.lower() for c in cols]
-    for pat in patterns:
-        for c, cl in zip(cols, cols_l):
-            if re.search(pat, cl):
-                return c
-    return None
-
-
-def pick_admin_col(cols, exact_names, patterns):
-    cols_l = [c.lower() for c in cols]
-    exact_l = [name.lower() for name in exact_names]
-    for target in exact_l:
-        for c, cl in zip(cols, cols_l):
-            if cl == target:
-                return c
-    return pick_col_by_regex(cols, patterns)
-
-
-def pick_municipality_name_col(cols):
-    return pick_admin_col(
-        cols,
-        exact_names=["statnaam", "name", "com_name", "gen"],
-        patterns=[r"gemeente.*naam", r"com.*name", r"\bnaam\b", r"name"],
-    )
-
-
-def pick_municipality_code_col(cols):
-    return pick_admin_col(
-        cols,
-        exact_names=["statcode", "com_istat_code", "ags", "ars"],
-        patterns=[r"gm_.*code", r"gemeente.*code", r"com.*istat.*code", r"com.*code", r"\bcode\b"],
-    )
-
-
-def pick_province_name_col(cols):
-    return pick_admin_col(
-        cols,
-        exact_names=["statnaam", "prov_name", "name", "gen"],
-        patterns=[r"provincie.*naam", r"prov.*name", r"\bnaam\b", r"name"],
-    )
-
-
-def pick_province_code_col(cols):
-    return pick_admin_col(
-        cols,
-        exact_names=["statcode", "prov_istat_code", "prov_acr", "lkz", "sn_l", "ags", "ars"],
-        patterns=[r"pv_.*code", r"provincie.*code", r"prov.*istat.*code", r"prov.*acr", r"\bcode\b"],
-    )
-
-
-def norm(value: object) -> str:
-    text = str(value or "").strip().lower()
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = text.replace("-", " ").replace("_", " ")
-    text = re.sub(r"\s+", " ", text)
-    text = re.sub(r"[^\w\s\.'()]", "", text)
-    return text.strip()
-
-
-def apply_location_province_overrides(
-    text_gdf: gpd.GeoDataFrame,
-    prov_gdf: gpd.GeoDataFrame,
-    prov_name_col: str,
-    prov_code_col: str | None = None,
-    location_province_overrides: dict[str, str] | None = None,
-) -> gpd.GeoDataFrame:
-    text_gdf = text_gdf.copy()
-    location_cols = [c for c in ["_loc_norm", "_loc_first", "llm_location", "geo_name_matched"] if c in text_gdf.columns]
-    if not location_cols:
-        return text_gdf
-
-    lookup = {
-        norm(name): row
-        for _, row in prov_gdf.iterrows()
-        for name in [row.get(prov_name_col)]
-    }
-
-    combined = None
-    for col in location_cols:
-        col_norm = text_gdf[col].map(norm)
-        combined = col_norm if combined is None else combined + " | " + col_norm
-
-    overrides = location_province_overrides if location_province_overrides is not None else LOCATION_PROVINCE_OVERRIDES
-    for loc_norm, province_name in overrides.items():
-        province_row = lookup.get(norm(province_name))
-        if province_row is None:
-            continue
-
-        mask = combined.str.contains(rf"(?:^|\| )?{re.escape(loc_norm)}(?:$| \|)", regex=True, na=False)
-        if not mask.any():
-            continue
-
-        text_gdf.loc[mask, "province_name"] = province_row[prov_name_col]
-        if prov_code_col is not None and "province_code" in text_gdf.columns:
-            text_gdf.loc[mask, "province_code"] = province_row[prov_code_col]
-
-    return text_gdf
-
-
-def parse_args():
+def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
     ap.add_argument("--input-gpkg", type=str, default="output/text/sentences_with_categories.gpkg")
     ap.add_argument("--input-layer", type=str, default="sentences_with_categories")
-    ap.add_argument("--municipality-gpkg", type=str, default="data/dutch/admin_areas_municipalities_2025.gpkg")
-    ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
+    ap.add_argument("--shapes-parquet", type=str, default="data/shapes.parquet")
+    ap.add_argument("--country", type=str, default="")
     ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_categories_admin.gpkg")
     ap.add_argument("--output-layer", type=str, default="sentences_with_categories_admin")
     ap.add_argument("--output-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
@@ -130,138 +28,69 @@ def parse_args():
     return ap.parse_args()
 
 
-def add_admin_by_representative_point(
-    text_gdf: gpd.GeoDataFrame,
-    admin_gdf: gpd.GeoDataFrame,
-    name_col: str,
-    out_name_col: str,
-    code_col: str | None = None,
-    out_code_col: str | None = None,
-    eligible_mask=None,
-):
+def assign_nuts2(text_gdf: gpd.GeoDataFrame, nuts2: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     text_gdf = text_gdf.loc[:, ~text_gdf.columns.duplicated()].copy()
-
-    if eligible_mask is None:
-        eligible_mask = text_gdf[out_name_col].isna()
-    else:
-        eligible_mask = eligible_mask & text_gdf[out_name_col].isna()
-
-    if not eligible_mask.any():
-        return text_gdf
-
-    rep = text_gdf.loc[eligible_mask, ["geometry"]].copy()
-    rep["geometry"] = rep.geometry.representative_point()
-    rep = gpd.GeoDataFrame(rep, geometry="geometry", crs=text_gdf.crs)
-
-    keep_cols = [name_col, "geometry"]
-    if code_col is not None:
-        keep_cols.insert(0, code_col)
-
-    joined = gpd.sjoin(rep, admin_gdf[keep_cols], how="left", predicate="within")
-    joined = joined.loc[:, ~joined.columns.duplicated()]
-    text_gdf.loc[joined.index, out_name_col] = joined[name_col]
-
-    if code_col is not None and out_code_col is not None:
-        text_gdf.loc[joined.index, out_code_col] = joined[code_col]
-
-    return text_gdf
-
-
-def main():
-    args = parse_args()
-    project_dir = Path(args.project_dir).expanduser().resolve()
-    os.chdir(project_dir)
-    location_province_overrides = load_location_province_overrides(
-        Path(args.location_province_overrides) if args.location_province_overrides else None
-    )
-
-    text_gdf = gpd.read_file(args.input_gpkg, layer=args.input_layer)
-    muni = gpd.read_file(args.municipality_gpkg)
-    prov = gpd.read_file(args.province_gpkg)
     if text_gdf.crs is None:
-        raise ValueError("Input layer has no CRS.")
+        raise ValueError("Input geometries have no CRS.")
+    if nuts2.crs is None:
+        raise ValueError("NUTS2 geometries have no CRS.")
+    if nuts2.crs != text_gdf.crs:
+        nuts2 = nuts2.to_crs(text_gdf.crs)
+    for col in ["nuts2_id", "nuts2_name", "province_code", "province_name", "country_id"]:
+        if col not in text_gdf.columns:
+            text_gdf[col] = None
 
-    prov_name_col = pick_province_name_col(prov.columns)
-    muni_name_col = pick_municipality_name_col(muni.columns)
-    prov_code_col = pick_province_code_col(prov.columns)
-    muni_code_col = pick_municipality_code_col(muni.columns)
-
-    if prov_name_col is None:
-        raise ValueError("Could not detect province name column.")
-    if muni_name_col is None:
-        raise ValueError("Could not detect municipality name column.")
-
-    if text_gdf.crs != prov.crs:
-        prov = prov.to_crs(text_gdf.crs)
-    if text_gdf.crs != muni.crs:
-        muni = muni.to_crs(text_gdf.crs)
-
-    prov_keep = [prov_name_col, "geometry"]
-    if prov_code_col is not None:
-        prov_keep.insert(0, prov_code_col)
-    text_gdf = gpd.sjoin(text_gdf, prov[prov_keep], how="left", predicate="within")
-    rename_dict = {prov_name_col: "province_name"}
-    if prov_code_col is not None:
-        rename_dict[prov_code_col] = "province_code"
-    text_gdf = text_gdf.rename(columns=rename_dict).drop(columns=["index_right"], errors="ignore")
     non_country = (
         text_gdf["geo_level"].astype(str).str.lower().ne("country")
         if "geo_level" in text_gdf.columns
-        else None
+        else pd.Series(True, index=text_gdf.index)
     )
-    text_gdf = add_admin_by_representative_point(
-        text_gdf=text_gdf,
-        admin_gdf=prov,
-        name_col=prov_name_col,
-        out_name_col="province_name",
-        code_col=prov_code_col,
-        out_code_col="province_code",
-        eligible_mask=non_country,
-    )
-    text_gdf = apply_location_province_overrides(
-        text_gdf=text_gdf,
-        prov_gdf=prov,
-        prov_name_col=prov_name_col,
-        prov_code_col=prov_code_col,
-        location_province_overrides=location_province_overrides,
-    )
-    print("Added province columns")
+    eligible = non_country & text_gdf.geometry.notna()
+    if not eligible.any() or nuts2.empty:
+        return text_gdf
 
-    muni_keep = [muni_name_col, "geometry"]
-    if muni_code_col is not None:
-        muni_keep.insert(0, muni_code_col)
-    text_gdf = gpd.sjoin(text_gdf, muni[muni_keep], how="left", predicate="within")
-    rename_dict = {muni_name_col: "municipality_name"}
-    if muni_code_col is not None:
-        rename_dict[muni_code_col] = "municipality_code"
-    text_gdf = text_gdf.rename(columns=rename_dict).drop(columns=["index_right"], errors="ignore")
-    eligible_for_muni = (
-        text_gdf["geo_level"].astype(str).str.lower().isin(["municipality", "city", "site"])
-        if "geo_level" in text_gdf.columns
-        else None
-    )
-    text_gdf = add_admin_by_representative_point(
-        text_gdf=text_gdf,
-        admin_gdf=muni,
-        name_col=muni_name_col,
-        out_name_col="municipality_name",
-        code_col=muni_code_col,
-        out_code_col="municipality_code",
-        eligible_mask=eligible_for_muni,
-    )
-    text_gdf = text_gdf.loc[:, ~text_gdf.columns.duplicated()]
-    print("Added municipality columns")
+    reps = text_gdf.loc[eligible, ["geometry"]].copy()
+    reps["geometry"] = reps.geometry.representative_point()
+    reps = gpd.GeoDataFrame(reps, geometry="geometry", crs=text_gdf.crs)
+
+    keep = ["country_id", "parent_id", "parent_name", "geometry"]
+    joined = gpd.sjoin(reps, nuts2[keep], how="left", predicate="within")
+    joined = joined.drop(columns=["index_right"], errors="ignore")
+    matched = joined["parent_id"].notna()
+    if matched.any():
+        idx = joined.loc[matched].index
+        text_gdf.loc[idx, "country_id"] = joined.loc[matched, "country_id"].values
+        text_gdf.loc[idx, "nuts2_id"] = joined.loc[matched, "parent_id"].values
+        text_gdf.loc[idx, "nuts2_name"] = joined.loc[matched, "parent_name"].values
+        text_gdf.loc[idx, "province_code"] = joined.loc[matched, "parent_id"].values
+        text_gdf.loc[idx, "province_name"] = joined.loc[matched, "parent_name"].values
+    return text_gdf
+
+
+def main() -> None:
+    args = parse_args()
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    os.chdir(project_dir)
+
+    text_gdf = gpd.read_file(args.input_gpkg, layer=args.input_layer)
+    if text_gdf.crs is None:
+        raise ValueError("Input layer has no CRS.")
+    text_gdf = text_gdf.to_crs("EPSG:4326")
+
+    shapes = load_shapes_parquet(args.shapes_parquet)
+    nuts2 = nuts2_shapes(shapes, args.country).to_crs(text_gdf.crs)
+    text_gdf = assign_nuts2(text_gdf, nuts2)
 
     Path(args.output_gpkg).parent.mkdir(parents=True, exist_ok=True)
     text_gdf.to_file(args.output_gpkg, layer=args.output_layer, driver="GPKG")
 
-    text_csv = text_gdf.to_crs(4326).copy()
+    text_csv = text_gdf.to_crs("EPSG:4326").copy()
     geom_type = text_csv.geometry.geom_type.fillna("")
     if (geom_type == "Point").all():
         text_csv["lon"] = text_csv.geometry.x
         text_csv["lat"] = text_csv.geometry.y
     else:
-        centroids = text_csv.geometry.centroid
+        centroids = text_csv.geometry.representative_point()
         text_csv["lon"] = centroids.x
         text_csv["lat"] = centroids.y
 

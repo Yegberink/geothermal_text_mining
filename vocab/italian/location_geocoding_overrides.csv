@@ -1,0 +1,15 @@
+location,action,target_type,target_name,country_id,nuts2_id,lat,lon,notes
+Valdicecina,nuts2,nuts2,Toscana,ITA,ITI1,,,Variant of Val di Cecina.
+Val di Cecina,nuts2,nuts2,Toscana,ITA,ITI1,,,Geothermal area in Toscana.
+Valdicena,nuts2,nuts2,Toscana,ITA,ITI1,,,Likely misspelling of Val di Cecina.
+Castelnuovo Valdicecina,nuts2,nuts2,Toscana,ITA,ITI1,,,Variant of Castelnuovo di Val di Cecina.
+Castelnuovo di Val di Cecina,nuts2,nuts2,Toscana,ITA,ITI1,,,Municipality in Toscana.
+Montecatini Valdicecina,nuts2,nuts2,Toscana,ITA,ITI1,,,Variant of Montecatini Val di Cecina.
+Montecatini Val di Cecina,nuts2,nuts2,Toscana,ITA,ITI1,,,Municipality in Toscana.
+Montenero d'Orcia,nuts2,nuts2,Toscana,ITA,ITI1,,,Locality in Toscana.
+Abbadia S. Salvatore,nuts2,nuts2,Toscana,ITA,ITI1,,,Variant of Abbadia San Salvatore.
+Abbadia San Salvatore,nuts2,nuts2,Toscana,ITA,ITI1,,,Municipality in Toscana.
+Valle del Diavolo,nuts2,nuts2,Toscana,ITA,ITI1,,,Geothermal area in Toscana.
+Castelgiorgio,nuts2,nuts2,Umbria,ITA,ITI2,,,Municipality in Umbria.
+Regione,ignore,,,,,,,Generic administrative word without a place name.
+Cosvig,ignore,,,,,,,"Organization name, not a place in this workflow."

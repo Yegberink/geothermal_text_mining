@@ -19,6 +19,8 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from tqdm.auto import tqdm
 
+from shape_resources import country_aliases_for, normalize_key
+
 SYSTEM = (
     "You are an assistant that extracts the single primary geographic location "
     "a newspaper paragraph is mainly about."
@@ -33,6 +35,7 @@ LOCATION_TRACKING_DEFAULTS = {
     "llm_document_location_raw": None,
     "llm_document_returned_none": None,
     "llm_country_fallback_applied": False,
+    "llm_location_was_country_level": False,
 }
 
 
@@ -64,7 +67,23 @@ def is_valid_location(value: object) -> bool:
 
 
 def normalize_location_key(value: object) -> str:
-    return str(value or "").strip().lower()
+    return normalize_key(value)
+
+
+def is_country_level_location(location: object, granularity: object, country: str) -> bool:
+    if not is_valid_location(location):
+        return False
+    gran = str(granularity or "").strip().lower()
+    aliases = country_aliases_for(country)
+    return gran == "country" or normalize_location_key(location) in aliases
+
+
+def normalize_country_payload(payload: dict, country: str) -> dict:
+    result = normalize_location_result(payload)
+    if is_country_level_location(result["location"], result["granularity"], country):
+        result["location"] = country
+        result["granularity"] = "country"
+    return result
 
 
 def normalize_location_result(obj: dict) -> dict:
@@ -304,8 +323,9 @@ def apply_location_payload(
     source: str,
     review_flag: bool,
     review_reason: Optional[str],
+    country: Optional[str] = None,
 ) -> None:
-    result = normalize_location_result(payload)
+    result = normalize_country_payload(payload, country) if country else normalize_location_result(payload)
     out.loc[idxs, "llm_location"] = result["location"]
     out.loc[idxs, "llm_granularity"] = result["granularity"]
     out.loc[idxs, "llm_confidence"] = result["confidence"]
@@ -316,6 +336,16 @@ def apply_location_payload(
     out.loc[idxs, "llm_location_review_flag"] = bool(review_flag)
     out.loc[idxs, "llm_location_review_reason"] = review_reason
     out.loc[idxs, "llm_country_fallback_applied"] = source == "country_fallback"
+    if country:
+        current_country_level = out.loc[idxs, "llm_location_was_country_level"].map(
+            lambda value: False if pd.isna(value) else str(value).strip().lower() in {"1", "true", "yes", "y"}
+        )
+        result_country_level = is_country_level_location(
+            result["location"],
+            result["granularity"],
+            country,
+        )
+        out.loc[idxs, "llm_location_was_country_level"] = current_country_level | result_country_level
 
 
 def country_fallback_payload(country: str) -> dict:
@@ -345,15 +375,26 @@ def apply_document_location_fallback(
             out[col] = default
 
     valid_mask = out["llm_location"].map(is_valid_location)
-    out.loc[valid_mask & out["llm_location_source"].isna(), "llm_location_source"] = "paragraph"
-    out.loc[valid_mask & out["llm_location_review_reason"].isna(), "llm_location_review_flag"] = False
+    country_level_mask = pd.Series(
+        [
+            is_country_level_location(location, granularity, country)
+            for location, granularity in zip(out["llm_location"], out["llm_granularity"])
+        ],
+        index=out.index,
+    )
+    out.loc[country_level_mask, "llm_location"] = country
+    out.loc[country_level_mask, "llm_granularity"] = "country"
+    out.loc[valid_mask, "llm_location_was_country_level"] = country_level_mask.loc[valid_mask]
+    paragraph_specific = valid_mask & ~country_level_mask
+    out.loc[paragraph_specific & out["llm_location_source"].isna(), "llm_location_source"] = "paragraph"
+    out.loc[paragraph_specific & out["llm_location_review_reason"].isna(), "llm_location_review_flag"] = False
 
     if "llm_status" in out.columns:
         completed_mask = out["llm_status"].isin(["ok", "empty"])
     else:
         completed_mask = pd.Series(True, index=out.index)
-    missing_mask = ~valid_mask & completed_mask
-    if not missing_mask.any():
+    eligible_mask = (~valid_mask | country_level_mask) & completed_mask
+    if not eligible_mask.any():
         return out
 
     doc_keys = out.apply(document_key_for_row, axis=1)
@@ -367,54 +408,79 @@ def apply_document_location_fallback(
             group_completed = group["llm_status"].isin(["ok", "empty"])
         else:
             group_completed = pd.Series(True, index=group.index)
-        group_missing = group[~group["llm_location"].map(is_valid_location) & group_completed]
-        if group_missing.empty:
+        group_valid = group["llm_location"].map(is_valid_location)
+        group_country_level = pd.Series(
+            [
+                is_country_level_location(location, granularity, country)
+                for location, granularity in zip(group["llm_location"], group["llm_granularity"])
+            ],
+            index=group.index,
+        )
+        group_eligible = group[(~group_valid | group_country_level) & group_completed]
+        if group_eligible.empty:
             continue
 
-        group_valid = group[group["llm_location"].map(is_valid_location)]
+        group_specific = group[group_valid & ~group_country_level]
+        group_country = group[group_valid & group_country_level]
         unique_locations = {}
-        for _, valid_row in group_valid.iterrows():
+        for _, valid_row in group_specific.iterrows():
             key = normalize_location_key(valid_row.get("llm_location"))
             unique_locations.setdefault(key, location_payload_from_row(valid_row))
 
-        missing_idxs = group_missing.index
+        eligible_idxs = group_eligible.index
         if len(unique_locations) == 1:
             payload = next(iter(unique_locations.values()))
             apply_location_payload(
                 out,
-                missing_idxs,
+                eligible_idxs,
                 payload,
                 source="document_single_location",
                 review_flag=False,
                 review_reason=None,
+                country=country,
             )
-            fallback_count += len(missing_idxs)
+            fallback_count += len(eligible_idxs)
+            continue
+
+        if not unique_locations and not group_country.empty:
+            payload = country_fallback_payload(country)
+            apply_location_payload(
+                out,
+                eligible_idxs,
+                payload,
+                source="country_all_document_locations",
+                review_flag=False,
+                review_reason=None,
+                country=country,
+            )
+            country_fallback_count += int((~group_valid.loc[eligible_idxs]).sum())
             continue
 
         review_reason = "multiple_document_locations" if unique_locations else "no_document_paragraph_locations"
         document_text = document_text_for_group(group, text_col)
         region_name = str(group.iloc[0].get(region_col, "") or country)
         payload = document_location_resolver(document_text, region_name, str(document_key))
-        document_result = normalize_location_result(payload)
+        document_result = normalize_country_payload(payload, country)
         document_returned_none = not is_valid_location(document_result.get("location"))
         source = "document_llm"
         if document_returned_none:
             payload = country_fallback_payload(country)
             source = "country_fallback"
             review_reason = f"{review_reason};document_llm_no_location"
-            country_fallback_count += len(missing_idxs)
+            country_fallback_count += len(eligible_idxs)
         else:
-            document_llm_count += len(missing_idxs)
+            document_llm_count += len(eligible_idxs)
         apply_location_payload(
             out,
-            missing_idxs,
+            eligible_idxs,
             payload,
             source=source,
             review_flag=True,
             review_reason=review_reason,
+            country=country,
         )
-        out.loc[missing_idxs, "llm_document_location_raw"] = document_result["location"]
-        out.loc[missing_idxs, "llm_document_returned_none"] = bool(document_returned_none)
+        out.loc[eligible_idxs, "llm_document_location_raw"] = document_result["location"]
+        out.loc[eligible_idxs, "llm_document_returned_none"] = bool(document_returned_none)
 
     if fallback_count or document_llm_count or country_fallback_count:
         print(f"[workflow_table] paragraph_locations_filled_from_document_single_location: {fallback_count}")

@@ -1,0 +1,9 @@
+location,action,target_type,target_name,country_id,nuts2_id,lat,lon,notes
+Eemland,nuts2,nuts2,Utrecht,NLD,NL35,,,Regional area in Utrecht.
+West-Brabant,nuts2,nuts2,Noord-Brabant,NLD,NL41,,,Regional area in Noord-Brabant.
+Noord-Limburg,nuts2,nuts2,Limburg (NL),NLD,NL42,,,Regional area in Limburg.
+Holland Rijnland,nuts2,nuts2,Zuid-Holland,NLD,NL36,,,Regional cooperation area in Zuid-Holland.
+Zuidoost-Nederland,ignore,,,,,,,Broad multi-region phrase; keep out of point geocoding.
+van Gerwen,ignore,,,,,,,"Person or organization name, not a place in this workflow."
+Parenco,ignore,,,,,,,"Company name, not a geographic target in this workflow."
+Gemeente,ignore,,,,,,,Generic administrative word without a place name.

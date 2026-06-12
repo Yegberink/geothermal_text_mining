@@ -76,8 +76,8 @@ def _default_country_codes(country):
         "italy": "it,sm,va",
         "germany": "de",
         "deutschland": "de",
-        "german-speaking countries": "de,at,ch,li",
-        "german speaking countries": "de,at,ch,li",
+        "german-speaking countries": "de,at,ch",
+        "german speaking countries": "de,at,ch",
     }
     return mapping.get(country_norm, "")
 
@@ -87,6 +87,13 @@ def _country_codes_for(language):
     if configured:
         return configured
     return ONLINE_GEOCODING.get("country_codes") or _default_country_codes(country_for(language))
+
+
+def _geonames_country_codes_for(language):
+    configured = ONLINE_GEOCODING.get("geonames_country_codes_by_language", {}).get(language)
+    if configured:
+        return configured
+    return _country_codes_for(language)
 
 
 def _language_resource_path(language, filename):
@@ -159,6 +166,16 @@ def _shell_join(values):
     return " ".join(shlex.quote(str(value)) for value in values)
 
 
+def _geocoding_candidate_specs():
+    return _shell_join(
+        (
+            f"{language}={country_for(language)}={_country_codes_for(language)}="
+            f"{path_for(language, 'geocoding_cache_candidates_csv')}"
+        )
+        for language in LANGUAGES
+    )
+
+
 PER_LANGUAGE_TARGET_KEYS = [
     "sentences_with_categories_admin_csv",
     "sentences_with_categories_admin_gpkg",
@@ -183,6 +200,10 @@ OVERARCHING_TARGETS = [
     "output/figures/all_languages_frames_sentiment_table.csv",
     "output/figures/all_languages_frames_country_sentiment_balance.png",
     "output/figures/all_languages_frames_country_sentiment_balance_table.csv",
+    "output/figures/all_languages_extreme_province_frame_shares_table.csv",
+    "output/figures/frame_mentions_100pct_stacked_table.csv",
+    "output/figures/frame_mentions_100pct_stacked.png",
+    "output/figures/frame_mentions_100pct_stacked.pdf",
     "output/figures/all_languages_province_sentiment_map.png",
 ]
 
@@ -225,7 +246,6 @@ rule preprocess_single_rtf_to_raw_articles:
 rule preprocess_rtf_to_paragraphs:
     input:
         chunks=lambda wildcards: _rtf_chunks(wildcards.language),
-        regions=pattern_for("newspaper_regions_csv"),
         script=str(PROJECT_DIR / "scripts" / "preprocess_rtf_to_paragraphs.py"),
     output:
         paragraphs=pattern_for("paragraphs_csv"),
@@ -240,7 +260,6 @@ rule preprocess_rtf_to_paragraphs:
           --language {wildcards.language} \
           --input-rtf-dir {params.input_dir:q} \
           {params.raw_article_args} \
-          --newspaper-region-csv {input.regions:q} \
           --output-paragraph-csv {output.paragraphs:q} \
           --output-articles-csv {output.articles:q} \
           --write-articles-csv
@@ -344,14 +363,13 @@ rule extract_locations:
         """
 
 
-rule geocode_paragraphs_offline:
+rule geocode_paragraphs_shapes:
     input:
         csv=pattern_for("paragraph_locations_csv"),
-        muni=pattern_for("municipality_gpkg"),
-        prov=pattern_for("province_gpkg"),
+        shapes=PATHS["shapes_parquet"],
     output:
-        gpkg=pattern_for("paragraphs_with_geo_offline_gpkg"),
-        csv=pattern_for("paragraph_offline_geocoding_csv"),
+        gpkg=pattern_for("paragraphs_with_geo_shapes_gpkg"),
+        csv=pattern_for("paragraph_shapes_geocoding_csv"),
     params:
         country=lambda wildcards: country_for(wildcards.language),
     shell:
@@ -359,8 +377,7 @@ rule geocode_paragraphs_offline:
         {PYTHON} scripts/geocoding_offline.py \
           --project-dir {PROJECT_DIR} \
           --input-csv {input.csv} \
-          --municipality-gpkg {input.muni} \
-          --province-gpkg {input.prov} \
+          --shapes-parquet {input.shapes} \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv} \
           --country "{params.country}" \
@@ -369,48 +386,135 @@ rule geocode_paragraphs_offline:
         """
 
 
-rule geocode_paragraphs_online:
+rule geocode_paragraphs_cache_candidates:
     input:
-        csv=pattern_for("paragraph_offline_geocoding_csv"),
-        muni=pattern_for("municipality_gpkg"),
-        prov=pattern_for("province_gpkg"),
+        csv=pattern_for("paragraph_shapes_geocoding_csv"),
+        shapes=PATHS["shapes_parquet"],
+        overrides=lambda wildcards: _language_resource_path(wildcards.language, "location_geocoding_overrides.csv"),
     output:
-        gpkg=pattern_for("paragraphs_with_geo_gpkg"),
-        csv=pattern_for("paragraphs_with_geo_csv"),
+        gpkg=temp("cache/{language}/paragraphs_with_geo_cache_candidates.gpkg"),
+        csv=temp("cache/{language}/paragraphs_with_geo_cache_candidates.csv"),
+        candidates=pattern_for("geocoding_cache_candidates_csv"),
+        suggestions=temp("cache/{language}/geocoding_cache_suggestions.csv"),
     params:
-        cache=lambda wildcards: path_for(wildcards.language, "nominatim_cache_json"),
         country=lambda wildcards: country_for(wildcards.language),
         country_codes=lambda wildcards: _country_codes_for(wildcards.language),
-        user_agent=ONLINE_GEOCODING.get("user_agent", "absa-geo-mapper"),
-        save_every=ONLINE_GEOCODING.get("save_every", 50),
-        print_every=ONLINE_GEOCODING.get("print_every", 25),
-        min_delay_seconds=ONLINE_GEOCODING.get("min_delay_seconds", 1.1),
-        timeout_seconds=ONLINE_GEOCODING.get("timeout_seconds", 10),
-        max_retries=ONLINE_GEOCODING.get("max_retries", 6),
-        backoff_base=ONLINE_GEOCODING.get("backoff_base", 1.6),
-        jitter=ONLINE_GEOCODING.get("jitter", 0.25),
-        max_queries=ONLINE_GEOCODING.get("max_queries", 0),
+        geonames_dir=ONLINE_GEOCODING.get("geonames_dir", "cache/geonames"),
+        geonames_country_codes=lambda wildcards: _geonames_country_codes_for(wildcards.language),
     shell:
         """
         {PYTHON} scripts/geocoding_online.py \
           --project-dir {PROJECT_DIR} \
           --input-csv {input.csv} \
-          --municipality-gpkg {input.muni} \
-          --province-gpkg {input.prov} \
+          --shapes-parquet {input.shapes} \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv} \
-          --cache-path {params.cache} \
+          --geocoder-cache-path /dev/null \
+          --skip-geocoder-cache \
+          --overrides-csv {input.overrides} \
+          --unmatched-csv {output.candidates} \
+          --suggestions-csv {output.suggestions} \
+          --geonames-dir {params.geonames_dir} \
+          --geonames-country-codes "{params.geonames_country_codes}" \
           --country "{params.country}" \
           --country-codes "{params.country_codes}" \
+          --points-layer paragraphs_points \
+          --polygons-layer paragraphs_polygons
+        """
+
+
+rule combine_geocoding_cache_candidates:
+    input:
+        candidates=expand(pattern_for("geocoding_cache_candidates_csv"), language=LANGUAGES),
+    output:
+        PATHS["geocoding_cache_candidates_all_csv"],
+    params:
+        specs=_geocoding_candidate_specs(),
+    shell:
+        """
+        {PYTHON} scripts/combine_geocoding_candidates.py \
+          --output-csv {output} \
+          --inputs {params.specs}
+        """
+
+
+rule fill_geocoder_cache_all:
+    input:
+        unmatched=PATHS["geocoding_cache_candidates_all_csv"],
+    output:
+        done=touch(PATHS["geocoder_cache_done"]),
+    params:
+        cache=PATHS["geocoder_cache_all_jsonl"],
+        provider=ONLINE_GEOCODING.get("provider", "none"),
+        policy_ack="--nominatim-policy-ack" if ONLINE_GEOCODING.get("nominatim_policy_ack", False) else "",
+        api_key_arg="--api-key " + shlex.quote(str(ONLINE_GEOCODING.get("api_key"))) if ONLINE_GEOCODING.get("api_key") else "",
+        retry_errors="--retry-errors" if ONLINE_GEOCODING.get("retry_errors", False) else "",
+        user_agent=ONLINE_GEOCODING.get("user_agent", "absa-geo-mapper"),
+        lock_path=ONLINE_GEOCODING.get("lock_path", "cache/geocoder_cache.lock"),
+        print_every=ONLINE_GEOCODING.get("print_every", 25),
+        min_delay_seconds=ONLINE_GEOCODING.get("min_delay_seconds", 1.1),
+        timeout_seconds=ONLINE_GEOCODING.get("timeout_seconds", 10),
+        max_retries=ONLINE_GEOCODING.get("max_retries", 3),
+        retry_wait_seconds=ONLINE_GEOCODING.get("service_error_cooldown_seconds", 20),
+        max_queries=ONLINE_GEOCODING.get("max_queries", 0),
+    resources:
+        nominatim=1,
+    shell:
+        """
+        {PYTHON} scripts/geocode_unmatched_online.py \
+          --project-dir {PROJECT_DIR} \
+          --input-unmatched-csv {input.unmatched} \
+          --output-cache {params.cache} \
+          --provider {params.provider} \
           --user-agent {params.user_agent} \
-          --save-every {params.save_every} \
+          --lock-path {params.lock_path} \
           --print-every {params.print_every} \
           --min-delay-seconds {params.min_delay_seconds} \
           --timeout-seconds {params.timeout_seconds} \
           --max-retries {params.max_retries} \
-          --backoff-base {params.backoff_base} \
-          --jitter {params.jitter} \
+          --retry-wait-seconds {params.retry_wait_seconds} \
           --max-queries {params.max_queries} \
+          {params.api_key_arg} \
+          {params.retry_errors} \
+          {params.policy_ack}
+        """
+
+
+rule geocode_paragraphs_final:
+    input:
+        csv=pattern_for("paragraph_shapes_geocoding_csv"),
+        shapes=PATHS["shapes_parquet"],
+        overrides=lambda wildcards: _language_resource_path(wildcards.language, "location_geocoding_overrides.csv"),
+        cache_done=PATHS["geocoder_cache_done"],
+    output:
+        gpkg=pattern_for("paragraphs_with_geo_gpkg"),
+        csv=pattern_for("paragraphs_with_geo_csv"),
+        unmatched=pattern_for("geocoding_unmatched_csv"),
+        suggestions=pattern_for("geocoding_suggestions_csv"),
+    params:
+        cache=PATHS["geocoder_cache_all_jsonl"],
+        legacy_cache=lambda wildcards: path_for(wildcards.language, "geocoder_cache_jsonl"),
+        country=lambda wildcards: country_for(wildcards.language),
+        country_codes=lambda wildcards: _country_codes_for(wildcards.language),
+        geonames_dir=ONLINE_GEOCODING.get("geonames_dir", "cache/geonames"),
+        geonames_country_codes=lambda wildcards: _geonames_country_codes_for(wildcards.language),
+    shell:
+        """
+        {PYTHON} scripts/geocoding_online.py \
+          --project-dir {PROJECT_DIR} \
+          --input-csv {input.csv} \
+          --shapes-parquet {input.shapes} \
+          --output-gpkg {output.gpkg} \
+          --output-csv {output.csv} \
+          --geocoder-cache-path {params.cache} \
+          --extra-geocoder-cache-path {params.legacy_cache} \
+          --overrides-csv {input.overrides} \
+          --unmatched-csv {output.unmatched} \
+          --suggestions-csv {output.suggestions} \
+          --geonames-dir {params.geonames_dir} \
+          --geonames-country-codes "{params.geonames_country_codes}" \
+          --country "{params.country}" \
+          --country-codes "{params.country_codes}" \
           --points-layer paragraphs_points \
           --polygons-layer paragraphs_polygons
         """
@@ -527,12 +631,12 @@ rule classify_sentence_categories:
 rule aggregate_to_admin_areas:
     input:
         gpkg=pattern_for("sentences_with_categories_gpkg"),
-        muni=pattern_for("municipality_gpkg"),
-        prov=pattern_for("province_gpkg"),
+        shapes=PATHS["shapes_parquet"],
     output:
         gpkg=pattern_for("sentences_with_categories_admin_gpkg"),
         csv=pattern_for("sentences_with_categories_admin_csv"),
     params:
+        country=lambda wildcards: country_for(wildcards.language),
         location_overrides=lambda wildcards: _language_resource_path(wildcards.language, "location_province_overrides.csv"),
     shell:
         """
@@ -540,8 +644,8 @@ rule aggregate_to_admin_areas:
           --project-dir {PROJECT_DIR} \
           --input-gpkg {input.gpkg} \
           --input-layer sentences_with_categories \
-          --municipality-gpkg {input.muni} \
-          --province-gpkg {input.prov} \
+          --shapes-parquet {input.shapes} \
+          --country "{params.country}" \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv} \
           --location-province-overrides {params.location_overrides}
@@ -575,7 +679,7 @@ rule visualize_absa_results:
         admin_csv=pattern_for("sentences_with_categories_admin_csv"),
         categories_csv=pattern_for("sentences_with_categories_short_csv"),
         keywords_csv=pattern_for("keywords_topics_csv"),
-        province_gpkg=pattern_for("province_gpkg"),
+        shapes=PATHS["shapes_parquet"],
         script=str(PROJECT_DIR / "scripts" / "visualize_absa_results.py"),
     output:
         frame_keywords=directory(pattern_for("frame_keywords_dir")),
@@ -596,7 +700,7 @@ rule visualize_absa_results:
           --admin-csv {input.admin_csv} \
           --categories-csv {input.categories_csv} \
           --keywords-csv {input.keywords_csv} \
-          --province-gpkg {input.province_gpkg} \
+          --shapes-parquet {input.shapes} \
           --output-dir {params.output_dir} \
           --country "{params.country}" \
           --location-province-overrides {params.location_overrides}
@@ -606,7 +710,7 @@ rule visualize_absa_results:
 rule visualize_overarching_results:
     input:
         admin_csvs=expand(pattern_for("sentences_with_categories_admin_csv"), language=LANGUAGES),
-        province_gpkgs=expand(pattern_for("province_gpkg"), language=LANGUAGES),
+        shapes=PATHS["shapes_parquet"],
         script=str(PROJECT_DIR / "scripts" / "visualize_overarching_results.py"),
     output:
         balance="output/figures/all_languages_province_sentiment_balance.png",
@@ -615,6 +719,10 @@ rule visualize_overarching_results:
         frames_table="output/figures/all_languages_frames_sentiment_table.csv",
         frame_country_balance="output/figures/all_languages_frames_country_sentiment_balance.png",
         frame_country_balance_table="output/figures/all_languages_frames_country_sentiment_balance_table.csv",
+        extreme_province_frame_shares_table="output/figures/all_languages_extreme_province_frame_shares_table.csv",
+        frame_mentions_stacked_table="output/figures/frame_mentions_100pct_stacked_table.csv",
+        frame_mentions_stacked_png="output/figures/frame_mentions_100pct_stacked.png",
+        frame_mentions_stacked_pdf="output/figures/frame_mentions_100pct_stacked.pdf",
         sentiment_map="output/figures/all_languages_province_sentiment_map.png",
     params:
         output_dir="output/figures",
@@ -627,7 +735,7 @@ rule visualize_overarching_results:
           --languages {params.languages} \
           --countries {params.countries} \
           --admin-csvs {input.admin_csvs} \
-          --province-gpkgs {input.province_gpkgs} \
+          --shapes-parquet {input.shapes} \
           --output-dir {params.output_dir}
         """
 

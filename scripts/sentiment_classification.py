@@ -218,19 +218,17 @@ def parse_ollama_sentiment_response(raw_response: str) -> dict[str, object]:
 
     lowered = raw_response.lower()
     lowered_norm = lowered.replace("’", "'").replace("‘", "'")
-    for sentiment in SENTIMENTS:
-        if sentiment in lowered_norm:
-            return {
-                "sentiment": sentiment,
-                "confidence": 0.0,
-                "evidence_short": "",
-            }
-
     refusal_markers = [
         "can't perform sentiment analysis",
         "cannot perform sentiment analysis",
+        "can't classify the sentiment",
+        "cannot classify the sentiment",
         "doesn't appear to be about geothermal",
         "does not appear to be about geothermal",
+        "doesn't mention geothermal",
+        "does not mention geothermal",
+        "not mention geothermal",
+        "not about geothermal",
     ]
     if any(marker in lowered_norm for marker in refusal_markers):
         return {
@@ -238,6 +236,14 @@ def parse_ollama_sentiment_response(raw_response: str) -> dict[str, object]:
             "confidence": 0.0,
             "evidence_short": "Model declined; treated as neutral.",
         }
+
+    for sentiment in SENTIMENTS:
+        if sentiment in lowered_norm:
+            return {
+                "sentiment": sentiment,
+                "confidence": 0.0,
+                "evidence_short": "",
+            }
 
     raise ValueError(f"Ollama did not return a parseable sentiment label: {raw_response!r}")
 

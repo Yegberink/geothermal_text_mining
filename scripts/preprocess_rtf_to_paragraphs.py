@@ -40,7 +40,6 @@ from language_resources import load_date_locale, load_geothermal_patterns, norma
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 INPUT_RTF_DIR = PROJECT_DIR / "input_data"
-NEWSPAPER_REGION_CSV = PROJECT_DIR / "data" / "dutch" / "newspaper_region_mapping.csv"
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "config.yaml"
 
 OUTPUT_DIR = PROJECT_DIR / "output" / "text"
@@ -219,6 +218,15 @@ def load_workflow_language(config_path: Path) -> str:
     with config_path.open("r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
     return str(config.get("language") or "dutch")
+
+
+def load_workflow_country(config_path: Path, language: str) -> str:
+    if not config_path.exists():
+        return language
+    with config_path.open("r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+    countries = config.get("countries", {}) or {}
+    return str(countries.get(language) or config.get("country") or language)
 
 
 def resolve_workflow_language(config_path: Path, cli_language: str = "") -> str:
@@ -447,12 +455,13 @@ def looks_corrupt_article(row: pd.Series) -> bool:
     return False
 
 
-def add_region_name(df: pd.DataFrame, mapping_csv: Path) -> pd.DataFrame:
+def add_region_name(df: pd.DataFrame, mapping_csv: Path | None = None, default_region: str = "") -> pd.DataFrame:
     df = df.copy()
-    df["region_name"] = ""
+    df["region_name"] = default_region
 
-    if not mapping_csv.exists():
-        log(f"[map] Mapping CSV not found, skipping: {mapping_csv}")
+    if mapping_csv is None or not mapping_csv.exists():
+        if mapping_csv is not None:
+            log(f"[map] Mapping CSV not found, skipping: {mapping_csv}")
         return df
 
     m = pd.read_csv(mapping_csv)
@@ -462,7 +471,7 @@ def add_region_name(df: pd.DataFrame, mapping_csv: Path) -> pd.DataFrame:
         )
 
     map_dict = dict(zip(m["newspaper"].map(normalize_key), m["region_name"].astype(str)))
-    df["region_name"] = df["newspaper"].map(lambda x: map_dict.get(normalize_key(x), ""))
+    df["region_name"] = df["newspaper"].map(lambda x: map_dict.get(normalize_key(x), default_region))
     return df
 
 
@@ -1964,7 +1973,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--input-raw-articles-csv", type=str, nargs="+", default=[])
     ap.add_argument("--output-raw-articles-csv", type=str, default=str(OUTPUT_RAW_ARTICLES_CSV))
     ap.add_argument("--raw-only", action="store_true")
-    ap.add_argument("--newspaper-region-csv", type=str, default=str(NEWSPAPER_REGION_CSV))
+    ap.add_argument("--newspaper-region-csv", type=str, default="")
     ap.add_argument("--output-paragraph-csv", type=str, default=str(OUTPUT_PARAGRAPH_CSV))
     ap.add_argument("--output-articles-csv", type=str, default=str(OUTPUT_ARTICLES_CSV))
     ap.add_argument("--write-articles-csv", action="store_true", default=WRITE_ARTICLES_CSV)
@@ -2038,7 +2047,7 @@ def main() -> None:
     input_raw_article_csvs = [
         Path(path).expanduser().resolve() for path in args.input_raw_articles_csv
     ]
-    newspaper_region_csv = Path(args.newspaper_region_csv).expanduser().resolve()
+    newspaper_region_csv = Path(args.newspaper_region_csv).expanduser().resolve() if args.newspaper_region_csv else None
     output_paragraph_csv = Path(args.output_paragraph_csv).expanduser().resolve()
     output_articles_csv = Path(args.output_articles_csv).expanduser().resolve()
     output_raw_articles_csv = Path(args.output_raw_articles_csv).expanduser().resolve()
@@ -2050,6 +2059,7 @@ def main() -> None:
     output_paragraph_csv.parent.mkdir(parents=True, exist_ok=True)
 
     workflow_language = resolve_workflow_language(config_path, args.language)
+    workflow_country = load_workflow_country(config_path, workflow_language)
     month_translations, weekday_names = load_preprocessing_config(
         config_path,
         project_dir,
@@ -2124,7 +2134,7 @@ def main() -> None:
     log(f"[workflow_table] cleaned_articles: {len(df)}")
 
     # 3) Region mapping
-    df = add_region_name(df, newspaper_region_csv)
+    df = add_region_name(df, newspaper_region_csv, default_region=workflow_country)
 
     # 4) Optionally write articles CSV
     if args.write_articles_csv:

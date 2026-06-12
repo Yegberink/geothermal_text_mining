@@ -105,6 +105,15 @@ def main():
             raise ImportError("geopandas is required when using --input-gpkg.")
         points_gdf = gpd.read_file(args.input_gpkg, layer=args.input_point_layer)
         polys_gdf = gpd.read_file(args.input_gpkg, layer=args.input_polygon_layer)
+        if points_gdf.crs is None:
+            raise ValueError(f"Input point layer '{args.input_point_layer}' has no CRS.")
+        if polys_gdf.crs is None:
+            raise ValueError(f"Input polygon layer '{args.input_polygon_layer}' has no CRS.")
+        if points_gdf.crs != polys_gdf.crs:
+            raise ValueError(
+                f"Input layer CRS mismatch: {args.input_point_layer}={points_gdf.crs}, "
+                f"{args.input_polygon_layer}={polys_gdf.crs}."
+            )
         points_gdf["source_layer"] = args.input_point_layer
         polys_gdf["source_layer"] = args.input_polygon_layer
         text_gdf = pd.concat([points_gdf, polys_gdf], ignore_index=True)

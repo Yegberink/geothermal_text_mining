@@ -15,6 +15,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from language_resources import country_aliases, load_keyword_csv, load_location_province_overrides
+from shape_resources import load_shapes_parquet, normalize_key, nuts2_shapes
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
@@ -25,7 +26,7 @@ SENTIMENT_COLORS = {
     "positive": "#009E73",
 }
 DESCRIPTIVE_BLUE = "#3f6f8f"
-MIN_PROVINCE_SENTENCES = 46
+MIN_PROVINCE_SENTENCES = 100
 LOCATION_PROVINCE_OVERRIDES = {}
 
 
@@ -35,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--admin-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
     ap.add_argument("--categories-csv", type=str, default="output/text/sentences_with_categories_short.csv")
     ap.add_argument("--keywords-csv", type=str, default="vocab/keywords_topics.csv")
-    ap.add_argument("--province-gpkg", type=str, default="data/dutch/admin_areas_provinces_2025.gpkg")
+    ap.add_argument("--shapes-parquet", type=str, default="data/shapes.parquet")
     ap.add_argument("--output-dir", type=str, default="output/figures")
     ap.add_argument("--country", type=str, default="Netherlands")
     ap.add_argument("--location-province-overrides", type=str, default="")
@@ -952,7 +953,8 @@ def write_empty_locations_html(out_path: Path, message: str) -> None:
 
 def plot_locations_interactive(
     admin_df: pd.DataFrame,
-    province_gpkg: Path,
+    shapes_parquet: Path,
+    country: str,
     out_path: Path,
 ) -> None:
     required = {"lon", "lat"}
@@ -994,13 +996,36 @@ def plot_locations_interactive(
     ).fillna("")
     points_df["frame_display"] = points_df.get("matched_categories_str", pd.Series(index=points_df.index, dtype=object)).fillna("").astype(str)
 
-    provinces = gpd.read_file(province_gpkg)
-    if provinces.crs is None:
-        raise ValueError("Province GeoPackage must have a CRS.")
-    provinces = provinces.to_crs("EPSG:4326")
-    provinces = provinces.reset_index(drop=True).copy()
-    provinces["_feature_id"] = provinces.index.astype(str)
-    provinces_json = json.loads(provinces.to_json(default=str))
+    shapes = load_shapes_parquet(shapes_parquet)
+    regions = nuts2_shapes(shapes, country)
+    regions = regions.reset_index(drop=True).copy()
+    region_scores = points_df.copy()
+    region_scores["_sent"] = normalize_sentiment(region_scores["sentiment"]) if "sentiment" in region_scores.columns else ""
+    region_scores = region_scores[region_scores["_sent"].isin(SENTIMENT_ORDER)].copy()
+    region_scores["_region_key"] = region_scores.get("province_code", region_scores.get("nuts2_id", "")).fillna("").astype(str)
+    if region_scores["_region_key"].eq("").all():
+        region_scores["_region_key"] = region_scores.get("province_name", region_scores.get("nuts2_name", "")).map(normalize_key)
+        regions["_region_key"] = regions["parent_name"].map(normalize_key)
+    else:
+        regions["_region_key"] = regions["parent_id"].astype(str)
+    region_counts = region_scores.groupby(["_region_key", "_sent"]).size().unstack(fill_value=0)
+    for sentiment in SENTIMENT_ORDER:
+        if sentiment not in region_counts.columns:
+            region_counts[sentiment] = 0
+    region_counts["n_total"] = region_counts[SENTIMENT_ORDER].sum(axis=1)
+    region_counts["polarity_balance"] = (
+        (region_counts["positive"] - region_counts["negative"]) / region_counts["n_total"].replace(0, pd.NA) * 100
+    ).fillna(0.0)
+    regions = regions.merge(
+        region_counts[["n_total", "polarity_balance"]],
+        left_on="_region_key",
+        right_index=True,
+        how="left",
+    )
+    regions["n_total"] = regions["n_total"].fillna(0).astype(int)
+    regions["polarity_balance"] = regions["polarity_balance"].fillna(0.0)
+    regions["_feature_id"] = regions.index.astype(str)
+    regions_json = json.loads(regions.to_json(default=str))
 
     marker_colors = {
         "negative": "#D55E00",
@@ -1013,16 +1038,23 @@ def plot_locations_interactive(
     fig = go.Figure()
     fig.add_trace(
         go.Choropleth(
-            geojson=provinces_json,
+            geojson=regions_json,
             featureidkey="properties._feature_id",
-            locations=provinces["_feature_id"],
-            z=[1] * len(provinces),
-            colorscale=[[0, "#efe5d2"], [1, "#efe5d2"]],
-            showscale=False,
+            locations=regions["_feature_id"],
+            z=regions["polarity_balance"],
+            customdata=regions[["parent_name", "parent_id", "n_total"]].values,
+            colorscale=[[0.0, "#D55E00"], [0.5, "#F5F5F5"], [1.0, "#009E73"]],
+            zmid=0,
+            showscale=True,
             marker_line_color="#ffffff",
-            marker_line_width=1.1,
-            hoverinfo="skip",
-            name="Provinces",
+            marker_line_width=0.7,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "NUTS2: %{customdata[1]}<br>"
+                "Balance: %{z:.1f} pp<br>"
+                "n=%{customdata[2]}<extra></extra>"
+            ),
+            name="NUTS2 sentiment",
         )
     )
     fig.add_trace(
@@ -1050,28 +1082,17 @@ def plot_locations_interactive(
         )
     )
 
-    prov_xmin, prov_ymin, prov_xmax, prov_ymax = provinces.total_bounds
-    xmin = min(prov_xmin, float(points_df["lon"].min()))
-    xmax = max(prov_xmax, float(points_df["lon"].max()))
-    ymin = min(prov_ymin, float(points_df["lat"].min()))
-    ymax = max(prov_ymax, float(points_df["lat"].max()))
+    reg_xmin, reg_ymin, reg_xmax, reg_ymax = regions.total_bounds
+    xmin = min(reg_xmin, float(points_df["lon"].min()))
+    xmax = max(reg_xmax, float(points_df["lon"].max()))
+    ymin = min(reg_ymin, float(points_df["lat"].min()))
+    ymax = max(reg_ymax, float(points_df["lat"].max()))
     xpad = max((xmax - xmin) * 0.08, 0.5)
     ypad = max((ymax - ymin) * 0.08, 0.5)
 
     fig.update_geos(
         fitbounds=False,
-        showcountries=True,
-        countrycolor="#b9b9b9",
-        countrywidth=0.7,
-        showcoastlines=True,
-        coastlinecolor="#9f9f9f",
-        coastlinewidth=0.7,
-        showland=True,
-        landcolor="#f7f2ea",
-        showocean=True,
-        oceancolor="#dbeaf2",
-        showlakes=False,
-        showrivers=False,
+        visible=False,
         bgcolor="#f6f1e8",
         lonaxis_range=[xmin - xpad, xmax + xpad],
         lataxis_range=[ymin - ypad, ymax + ypad],
@@ -1186,7 +1207,7 @@ def main() -> None:
     admin_df = pd.read_csv(args.admin_csv)
     categories_df = pd.read_csv(args.categories_csv)
     frame_order, frame_keywords, display_lookup = load_frame_keyword_vocab(Path(args.keywords_csv))
-    province_gpkg = Path(args.province_gpkg)
+    shapes_parquet = Path(args.shapes_parquet)
     location_province_overrides = load_location_province_overrides(
         Path(args.location_province_overrides) if args.location_province_overrides else None
     )
@@ -1219,7 +1240,8 @@ def main() -> None:
     )
     plot_locations_interactive(
         admin_df,
-        province_gpkg,
+        shapes_parquet,
+        args.country,
         output_dir / "locations_map.html",
     )
     frame_keyword_pairs = build_frame_keyword_sentiment_data(
