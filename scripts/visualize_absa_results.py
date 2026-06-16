@@ -14,19 +14,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import plotly.graph_objects as go
 
-from language_resources import country_aliases, load_keyword_csv, load_location_province_overrides
+from country_scope import country_scope_from_args, single_country_from_row
+from language_resources import load_keyword_csv, load_location_province_overrides
 from shape_resources import load_shapes_parquet, normalize_key, nuts2_shapes
+from visual_constants import SENTIMENT_COLORS, SENTIMENT_ORDER
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
-SENTIMENT_ORDER = ["negative", "neutral", "positive"]
-SENTIMENT_COLORS = {
-    "negative": "#D55E00",
-    "neutral": "#999999",
-    "positive": "#009E73",
-}
 DESCRIPTIVE_BLUE = "#3f6f8f"
-MIN_PROVINCE_SENTENCES = 100
+MIN_PROVINCE_SENTENCES = 98
 LOCATION_PROVINCE_OVERRIDES = {}
 
 
@@ -38,7 +34,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--keywords-csv", type=str, default="vocab/keywords_topics.csv")
     ap.add_argument("--shapes-parquet", type=str, default="data/shapes.parquet")
     ap.add_argument("--output-dir", type=str, default="output/figures")
-    ap.add_argument("--country", type=str, default="Netherlands")
+    ap.add_argument("--country", type=str, default="Netherlands", help="Backward-compatible single-country shorthand.")
+    ap.add_argument("--countries", nargs="+", default=None)
+    ap.add_argument("--country-scope", type=str, default="")
     ap.add_argument("--location-province-overrides", type=str, default="")
     return ap.parse_args()
 
@@ -122,15 +120,10 @@ def apply_province_overrides(
 
 
 def is_country_location(df: pd.DataFrame, country: str) -> pd.Series:
-    location_cols = [c for c in ["_loc_norm", "_loc_first", "llm_location", "geo_name_matched"] if c in df.columns]
-    if not location_cols:
+    scope = country_scope_from_args(country=country)
+    if not scope.countries:
         return pd.Series(False, index=df.index)
-
-    aliases = {normalize_location_value(alias) for alias in country_aliases(country)}
-    mask = pd.Series(False, index=df.index)
-    for col in location_cols:
-        mask = mask | df[col].map(normalize_location_value).isin(aliases)
-    return mask
+    return df.apply(lambda row: single_country_from_row(row) in set(scope.countries), axis=1)
 
 
 def load_frame_keyword_vocab(path: Path) -> tuple[list[str], dict[str, set[str]], dict[str, dict[str, str]]]:
@@ -175,14 +168,28 @@ def build_province_summary(
     df["_sent"] = normalize_sentiment(df[sentiment_source_col])
     df = df[df["_sent"].isin(SENTIMENT_ORDER)].copy()
     df = apply_province_overrides(df, location_province_overrides)
+    country_scope = country_scope_from_args(country=country)
+
+    def row_country(row: pd.Series) -> str | None:
+        canonical = single_country_from_row(row)
+        if canonical:
+            return canonical
+        assignment = str(row.get("llm_country_assignment_type", "") or "").strip()
+        if assignment:
+            return None
+        if country_scope.is_single_country:
+            return country_scope.primary_country
+        return None
+
+    df["_single_country"] = df.apply(row_country, axis=1)
 
     has_province = df["province_name"].notna() & df["province_name"].astype(str).str.strip().ne("")
-    include_in_overall = has_province | (~has_province & is_country_location(df, country))
-    overall_counts = df.loc[include_in_overall, "_sent"].value_counts().reindex(SENTIMENT_ORDER, fill_value=0)
+    overall_counts = df["_sent"].value_counts().reindex(SENTIMENT_ORDER, fill_value=0)
     overall_total = int(overall_counts.sum())
     overall = pd.DataFrame(
         [{
             "province_name": "All sentences",
+            "aggregation_level": "all",
             "n_neg": int(overall_counts["negative"]),
             "n_neu": int(overall_counts["neutral"]),
             "n_pos": int(overall_counts["positive"]),
@@ -198,6 +205,30 @@ def build_province_summary(
             ),
         }]
     )
+
+    country_df = df.dropna(subset=["_single_country"]).copy()
+    country_grouped = (
+        country_df.groupby(["_single_country", "_sent"])
+        .size()
+        .unstack(fill_value=0)
+        .reindex(columns=SENTIMENT_ORDER, fill_value=0)
+        .rename(columns={"negative": "n_neg", "neutral": "n_neu", "positive": "n_pos"})
+        .reset_index()
+        .rename(columns={"_single_country": "province_name"})
+    )
+    if not country_grouped.empty:
+        country_grouped["aggregation_level"] = "country"
+        country_grouped["n_text_units"] = country_grouped["n_neg"] + country_grouped["n_neu"] + country_grouped["n_pos"]
+        denom = country_grouped["n_text_units"].replace({0: pd.NA})
+        country_grouped["pct_neg"] = 100 * country_grouped["n_neg"] / denom
+        country_grouped["pct_neu"] = 100 * country_grouped["n_neu"] / denom
+        country_grouped["pct_pos"] = 100 * country_grouped["n_pos"] / denom
+        country_grouped["polarity_balance"] = country_grouped["pct_pos"] - country_grouped["pct_neg"]
+        country_order = {country_name: idx for idx, country_name in enumerate(country_scope.countries)}
+        country_grouped["_country_order"] = country_grouped["province_name"].map(country_order).fillna(len(country_order)).astype(int)
+        country_grouped = country_grouped.sort_values(["_country_order", "province_name"]).drop(columns="_country_order")
+    else:
+        country_grouped = pd.DataFrame(columns=overall.columns)
 
     df = df.dropna(subset=["province_name"])
     df = df[df["province_name"].astype(str).str.strip().ne("")]
@@ -217,9 +248,10 @@ def build_province_summary(
     grouped["pct_neu"] = 100 * grouped["n_neu"] / denom
     grouped["pct_pos"] = 100 * grouped["n_pos"] / denom
     grouped["polarity_balance"] = grouped["pct_pos"] - grouped["pct_neg"]
+    grouped["aggregation_level"] = "nuts2"
     grouped = grouped[grouped["n_text_units"] >= MIN_PROVINCE_SENTENCES].copy()
     grouped = grouped.sort_values(["n_text_units", "province_name"], ascending=[False, True]).reset_index(drop=True)
-    return pd.concat([overall, grouped], ignore_index=True)
+    return pd.concat([overall, country_grouped, grouped], ignore_index=True, sort=False)
 
 
 def plot_province_sentiment_balance(province_tbl: pd.DataFrame, out_path: Path) -> None:
@@ -485,11 +517,12 @@ def build_region_frame_counts(
 
 
 def eligible_province_summary(province_tbl: pd.DataFrame) -> pd.DataFrame:
-    return province_tbl[
+    eligible = province_tbl[
         province_tbl["province_name"].notna()
         & province_tbl["province_name"].astype(str).str.strip().ne("")
         & province_tbl["province_name"].astype(str).ne("All sentences")
     ].copy()
+    return eligible
 
 
 def plot_single_region_frame_counts(region_counts: pd.DataFrame, province_name: str, out_path: Path) -> None:
@@ -597,6 +630,8 @@ def plot_region_sentiment_extreme_frame_comparison(
 
 
 def most_negative_positive_provinces(province_summary: pd.DataFrame) -> list[str]:
+    if "aggregation_level" in province_summary.columns:
+        province_summary = province_summary[province_summary["aggregation_level"].astype(str).eq("nuts2")].copy()
     if province_summary.empty or province_summary["province_name"].nunique() < 2:
         return []
 
@@ -1028,9 +1063,9 @@ def plot_locations_interactive(
     regions_json = json.loads(regions.to_json(default=str))
 
     marker_colors = {
-        "negative": "#D55E00",
-        "neutral": "#999999",
-        "positive": "#009E73",
+        "negative": SENTIMENT_COLORS["negative"],
+        "neutral": SENTIMENT_COLORS["neutral"],
+        "positive": SENTIMENT_COLORS["positive"],
         "": "#c75b39",
     }
     points_df["marker_color"] = points_df["sentiment_display"].map(marker_colors).fillna("#c75b39")
@@ -1043,7 +1078,7 @@ def plot_locations_interactive(
             locations=regions["_feature_id"],
             z=regions["polarity_balance"],
             customdata=regions[["parent_name", "parent_id", "n_total"]].values,
-            colorscale=[[0.0, "#D55E00"], [0.5, "#F5F5F5"], [1.0, "#009E73"]],
+            colorscale=[[0.0, SENTIMENT_COLORS["negative"]], [0.5, "#F5F5F5"], [1.0, SENTIMENT_COLORS["positive"]]],
             zmid=0,
             showscale=True,
             marker_line_color="#ffffff",
@@ -1206,6 +1241,12 @@ def main() -> None:
 
     admin_df = pd.read_csv(args.admin_csv)
     categories_df = pd.read_csv(args.categories_csv)
+    country_scope = country_scope_from_args(
+        country=args.country,
+        countries=args.countries,
+        country_scope=args.country_scope,
+    )
+    country_label = country_scope.label or args.country
     frame_order, frame_keywords, display_lookup = load_frame_keyword_vocab(Path(args.keywords_csv))
     shapes_parquet = Path(args.shapes_parquet)
     location_province_overrides = load_location_province_overrides(
@@ -1217,7 +1258,7 @@ def main() -> None:
     frame_keywords_dir = output_dir / "frame_keywords"
     region_frames_dir = output_dir / "region_frames"
 
-    province_tbl = build_province_summary(admin_df, args.country, location_province_overrides)
+    province_tbl = build_province_summary(admin_df, country_label, location_province_overrides)
     province_tbl.to_csv(output_dir / "province_sentiment_table.csv", index=False)
 
     plot_province_sentiment_balance(
@@ -1241,7 +1282,7 @@ def main() -> None:
     plot_locations_interactive(
         admin_df,
         shapes_parquet,
-        args.country,
+        country_label,
         output_dir / "locations_map.html",
     )
     frame_keyword_pairs = build_frame_keyword_sentiment_data(

@@ -10,6 +10,14 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
+from country_scope import (
+    CountryScope,
+    country_assignment_for_location,
+    country_scope_from_args,
+    country_candidates_for_label,
+    country_candidates_json,
+    country_name_for_id,
+)
 from shape_resources import (
     centroid_point,
     country_alias_lookup,
@@ -29,7 +37,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--shapes-parquet", type=str, default="data/shapes.parquet")
     ap.add_argument("--output-gpkg", type=str, default="output/text/paragraphs_with_geo.gpkg")
     ap.add_argument("--output-csv", type=str, default="output/text/paragraphs_with_geo.csv")
-    ap.add_argument("--country", type=str, default="Netherlands")
+    ap.add_argument("--country", type=str, default="Netherlands", help="Backward-compatible single-country shorthand.")
+    ap.add_argument("--countries", nargs="+", default=None)
+    ap.add_argument("--country-scope", type=str, default="")
     ap.add_argument("--points-layer", type=str, default="paragraphs_points")
     ap.add_argument("--polygons-layer", type=str, default="paragraphs_polygons")
     return ap.parse_args()
@@ -80,11 +90,29 @@ def apply_geometry(df: pd.DataFrame, idx, row: pd.Series, level: str, source: st
     df.at[idx, "geom_point_wkt"] = point.wkt
     df.at[idx, "geom_poly_wkt"] = geom.wkt
     df.at[idx, "country_id"] = row.get("country_id")
+    canonical_country = country_name_for_id(row.get("country_id"))
+    if canonical_country:
+        df.at[idx, "llm_country"] = canonical_country
+        df.at[idx, "llm_country_candidates"] = country_candidates_json([canonical_country])
+        df.at[idx, "llm_country_assignment_type"] = "single_country"
+        df.at[idx, "llm_has_single_country"] = True
     if level == "nuts2":
         df.at[idx, "nuts2_id"] = row.get("parent_id")
         df.at[idx, "nuts2_name"] = row.get("parent_name")
         df.at[idx, "province_code"] = row.get("parent_id")
         df.at[idx, "province_name"] = row.get("parent_name")
+
+
+def should_skip_geocoding(row: pd.Series, country_scope: CountryScope) -> bool:
+    location = row.get("llm_location")
+    granularity = row.get("llm_granularity")
+    loc_norm = normalize_key(first_candidate(location))
+    if not loc_norm or loc_norm in {"none", "nan", "null"}:
+        return True
+    if str(row.get("llm_country_assignment_type", "") or "").strip() == "multiple_countries":
+        return True
+    candidates = country_candidates_for_label(location, allowed_countries=country_scope.countries or None)
+    return len(candidates) > 1
 
 
 def write_outputs(df: pd.DataFrame, output_gpkg: Path, output_csv: Path, points_layer: str, polygons_layer: str) -> None:
@@ -118,13 +146,18 @@ def main() -> None:
     args = parse_args()
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
+    country_scope = country_scope_from_args(
+        country=args.country,
+        countries=args.countries,
+        country_scope=args.country_scope,
+    )
 
     shapes = load_shapes_parquet(args.shapes_parquet)
-    nuts2 = nuts2_shapes(shapes, args.country)
-    countries = country_shapes(shapes, args.country)
+    nuts2 = nuts2_shapes(shapes, country_scope.label)
+    countries = country_shapes(shapes, country_scope.label)
     nuts_lookup = build_lookup(nuts2)
     country_lookup = build_lookup(countries)
-    country_aliases = country_alias_lookup(args.country)
+    country_aliases = country_alias_lookup(country_scope.label)
 
     df = pd.read_csv(args.input_csv)
     df = df.loc[:, ~df.columns.duplicated()].copy()
@@ -148,10 +181,15 @@ def main() -> None:
             df[col] = None
 
     for idx, loc_norm in df["_loc_norm"].items():
+        if should_skip_geocoding(df.loc[idx], country_scope):
+            continue
         if not loc_norm:
             continue
         country_id = country_aliases.get(loc_norm)
         if country_id:
+            assignment = country_assignment_for_location(df.at[idx, "llm_location"], df.at[idx, "llm_granularity"], country_scope)
+            if assignment["llm_country_assignment_type"] != "single_country":
+                continue
             country_row = country_lookup.get(normalize_key(country_id))
             if country_row is not None:
                 apply_geometry(df, idx, country_row, "country", "shapes_parquet", "country_alias")

@@ -1,11 +1,20 @@
 python: python
 language: german
 languages: auto
-country: German-speaking countries
-countries:
-  dutch: Netherlands
-  german: German-speaking countries
-  italian: Italy
+# Text language and geographic scope are separate. German-language text is
+# processed against a multi-country DACH scope, while Dutch and Italian use
+# one-country scopes. Legacy `country`/`countries` config is still accepted by
+# scripts as a backward-compatible shorthand.
+country_scope:
+  countries_by_language:
+    dutch:
+      - Netherlands
+    german:
+      - Germany
+      - Austria
+      - Switzerland
+    italian:
+      - Italy
 make_annotation_df: true
 
 annotation:
@@ -100,6 +109,7 @@ paths:
   categories_sentiment_distribution_png: output/figures/categories_sentiment_distribution.png
   locations_map_html: output/figures/locations_map.html
   annotation_sentences_csv: annotation/sentences_for_annotation.csv
+  data_tracking_csv: output/text/data_tracking.csv
 
   geo_checkpoint: cache/geo_checkpoint.parquet
   geo_cache: cache/geo_cache.jsonl

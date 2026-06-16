@@ -17,6 +17,7 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point
 
+from country_scope import country_candidates_for_label, country_name_for_id, country_scope_from_args, country_candidates_json
 from shape_resources import centroid_point, load_shapes_parquet, normalize_key, nuts2_shapes
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -136,7 +137,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--disable-geonames", action="store_true")
     ap.add_argument("--download-geonames", action="store_true")
     ap.add_argument("--disable-nominatim", action="store_true", help=argparse.SUPPRESS)
-    ap.add_argument("--country", type=str, default="Netherlands")
+    ap.add_argument("--country", type=str, default="Netherlands", help="Backward-compatible single-country shorthand.")
+    ap.add_argument("--countries", nargs="+", default=None)
+    ap.add_argument("--country-scope", type=str, default="")
     ap.add_argument("--country-codes", type=str, default="")
     ap.add_argument("--attach-nuts2-polygons-for-online-points", action="store_true")
     ap.add_argument("--points-layer", type=str, default="paragraphs_points")
@@ -249,7 +252,13 @@ def load_geonames_gazetteer(
 
 def useful_granularity_mask(df: pd.DataFrame) -> pd.Series:
     gran = df["_gran"].astype(str).str.strip().str.lower()
-    return ~gran.isin(["", "none", "country"])
+    mask = ~gran.isin(["", "none", "country"])
+    if "llm_country_assignment_type" in df.columns:
+        mask = mask & df["llm_country_assignment_type"].astype(str).str.strip().ne("multiple_countries")
+    if "llm_location" in df.columns:
+        multi_country_location = df["llm_location"].map(lambda value: len(country_candidates_for_label(value)) > 1)
+        mask = mask & ~multi_country_location
+    return mask
 
 
 def ignored_location_mask(df: pd.DataFrame) -> pd.Series:
@@ -261,10 +270,16 @@ def has_geometry_mask(df: pd.DataFrame) -> pd.Series:
 
 
 def load_location_geocoding_overrides(path: Path | None) -> pd.DataFrame:
+    def empty_overrides() -> pd.DataFrame:
+        return pd.DataFrame(columns=OVERRIDE_COLUMNS)
+
     if path is None or not path.exists():
-        out = pd.DataFrame(columns=OVERRIDE_COLUMNS)
+        out = empty_overrides()
     else:
-        out = pd.read_csv(path, dtype=str, keep_default_na=False)
+        try:
+            out = pd.read_csv(path, dtype=str, keep_default_na=False)
+        except pd.errors.EmptyDataError:
+            out = empty_overrides()
         for col in OVERRIDE_COLUMNS:
             if col not in out.columns:
                 out[col] = ""
@@ -307,6 +322,12 @@ def apply_nuts2_geometry(df: pd.DataFrame, idx: Any, row: pd.Series, source: str
     df.at[idx, "geom_point_wkt"] = point.wkt
     df.at[idx, "geom_poly_wkt"] = geom.wkt
     df.at[idx, "country_id"] = row.get("country_id")
+    canonical_country = country_name_for_id(row.get("country_id"))
+    if canonical_country:
+        df.at[idx, "llm_country"] = canonical_country
+        df.at[idx, "llm_country_candidates"] = country_candidates_json([canonical_country])
+        df.at[idx, "llm_country_assignment_type"] = "single_country"
+        df.at[idx, "llm_has_single_country"] = True
     df.at[idx, "nuts2_id"] = row.get("parent_id")
     df.at[idx, "nuts2_name"] = row.get("parent_name")
     df.at[idx, "province_code"] = row.get("parent_id")
@@ -335,7 +356,7 @@ def apply_location_geocoding_overrides(
 
     override_lookup = overrides.drop_duplicates("_location_norm", keep="last").set_index("_location_norm")
     nuts2_lookup = build_nuts2_lookup(nuts2)
-    eligible = ~has_geometry_mask(df) & df["_loc_first"].astype(str).str.strip().ne("")
+    eligible = ~has_geometry_mask(df) & useful_granularity_mask(df) & df["_loc_first"].astype(str).str.strip().ne("")
     matched = 0
     ignored = 0
 
@@ -369,6 +390,12 @@ def apply_location_geocoding_overrides(
             df.at[idx, "geom_point_wkt"] = Point(lon, lat).wkt
             if str(override.get("country_id") or "").strip():
                 df.at[idx, "country_id"] = str(override.get("country_id")).strip()
+                canonical_country = country_name_for_id(override.get("country_id"))
+                if canonical_country:
+                    df.at[idx, "llm_country"] = canonical_country
+                    df.at[idx, "llm_country_candidates"] = country_candidates_json([canonical_country])
+                    df.at[idx, "llm_country_assignment_type"] = "single_country"
+                    df.at[idx, "llm_has_single_country"] = True
             matched += 1
             continue
 
@@ -421,6 +448,12 @@ def apply_geonames_matches(df: pd.DataFrame, gazetteer: pd.DataFrame) -> pd.Data
         df.at[idx, "geo_name_matched"] = display_name
         df.at[idx, "geo_match_type"] = "geonames_exact"
         df.at[idx, "country_id"] = row.get("country_code")
+        canonical_country = country_name_for_id(row.get("country_code"))
+        if canonical_country:
+            df.at[idx, "llm_country"] = canonical_country
+            df.at[idx, "llm_country_candidates"] = country_candidates_json([canonical_country])
+            df.at[idx, "llm_country_assignment_type"] = "single_country"
+            df.at[idx, "llm_has_single_country"] = True
         matched += 1
     print(f"[workflow_table] paragraphs_geocoded_geonames: {matched}")
     return df
@@ -431,8 +464,10 @@ def bias_query(query: str, country: str) -> str:
     country = str(country or "").strip()
     if not query or not country:
         return query
-    if "speaking countries" in country.lower():
+    country_candidates = country_candidates_for_label(country)
+    if len(country_candidates) != 1:
         return query
+    country = country_candidates[0]
     if re.search(rf"\b{re.escape(country)}\b", query, flags=re.IGNORECASE):
         return query
     return f"{query}, {country}"
@@ -585,6 +620,13 @@ def apply_nuts2_assignment(df: pd.DataFrame, nuts2: gpd.GeoDataFrame, attach_pol
     df.loc[idxs, "nuts2_name"] = joined.loc[matched, "parent_name"].values
     df.loc[idxs, "province_code"] = joined.loc[matched, "parent_id"].values
     df.loc[idxs, "province_name"] = joined.loc[matched, "parent_name"].values
+    for idx in idxs:
+        canonical_country = country_name_for_id(df.at[idx, "country_id"])
+        if canonical_country:
+            df.at[idx, "llm_country"] = canonical_country
+            df.at[idx, "llm_country_candidates"] = country_candidates_json([canonical_country])
+            df.at[idx, "llm_country_assignment_type"] = "single_country"
+            df.at[idx, "llm_has_single_country"] = True
     empty_match_type = df.loc[idxs, "geo_match_type"].isna() | df.loc[idxs, "geo_match_type"].astype(str).str.strip().eq("")
     if empty_match_type.any():
         df.loc[empty_match_type[empty_match_type].index, "geo_match_type"] = "point_then_nuts2"
@@ -766,11 +808,16 @@ def main() -> None:
     args = parse_args()
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
+    country_scope = country_scope_from_args(
+        country=args.country,
+        countries=args.countries,
+        country_scope=args.country_scope,
+    )
 
     df = pd.read_csv(args.input_csv, dtype=str)
     df = ensure_output_columns(df)
     shapes = load_shapes_parquet(args.shapes_parquet)
-    nuts2 = nuts2_shapes(shapes, args.country)
+    nuts2 = nuts2_shapes(shapes, country_scope.label)
     gazetteer = pd.DataFrame()
 
     for idx, loc_norm in df["_loc_first"].map(normalize_key).items():
@@ -808,7 +855,7 @@ def main() -> None:
         cache = load_geocoder_cache(Path(args.geocoder_cache_path))
         for extra_cache_path in args.extra_geocoder_cache_path:
             cache.update(load_geocoder_cache(Path(extra_cache_path)))
-    df = apply_cached_geocoder_matches(df, cache, args.country, args.country_codes)
+    df = apply_cached_geocoder_matches(df, cache, country_scope.label, args.country_codes)
 
     df = apply_nuts2_assignment(df, nuts2, args.attach_nuts2_polygons_for_online_points)
     unmatched = write_unmatched_report(df, Path(args.unmatched_csv))

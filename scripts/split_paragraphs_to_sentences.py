@@ -96,7 +96,7 @@ def main() -> None:
 
     input_paragraphs = len(df)
     has_geo = df["geom_point_wkt"].notna() | df["geom_poly_wkt"].notna()
-    df = df.loc[has_geo].copy()
+    paragraphs_without_geo = int((~has_geo).sum())
 
     nlp = build_segmenter(args.language)
     rows: list[dict] = []
@@ -121,7 +121,7 @@ def main() -> None:
     out.to_csv(output_csv, index=False, encoding="utf-8")
     print(f"Wrote: {output_csv} (rows={len(out)})")
     print(f"[workflow_table] paragraphs_before_sentence_geo_filter: {input_paragraphs}")
-    print(f"[workflow_table] paragraphs_dropped_before_sentence_split_no_geo: {input_paragraphs - len(df)}")
+    print(f"[workflow_table] paragraphs_without_geo_before_sentence_split: {paragraphs_without_geo}")
     print(f"[workflow_table] paragraphs_split_to_sentences: {len(df)}")
     print(f"[workflow_table] sentences_after_split: {len(out)}")
 

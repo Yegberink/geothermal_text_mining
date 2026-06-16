@@ -8,6 +8,8 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from country_scope import COUNTRY_ALIASES, standardize_country_name
+
 
 KEYWORD_CSV_SEPARATOR = ";"
 
@@ -123,16 +125,6 @@ DEFAULT_GEOTHERMAL_PATTERNS = {
     "german": [r"geotherm\w*", r"erdwärme\w*", r"erdwaerme\w*", r"tiefengeotherm\w*"],
 }
 
-COUNTRY_NAME_ALIASES = {
-    "netherlands": {"nederland", "netherlands", "the netherlands", "holland"},
-    "nederland": {"nederland", "netherlands", "the netherlands", "holland"},
-    "italy": {"italy", "italia", "italien"},
-    "italia": {"italy", "italia", "italien"},
-    "germany": {"germany", "deutschland", "bundesrepublik deutschland", "brd"},
-    "deutschland": {"germany", "deutschland", "bundesrepublik deutschland", "brd"},
-}
-
-
 def normalize_language(language: str | None) -> str:
     value = str(language or "").strip().lower()
     return LANGUAGE_DIR_ALIASES.get(value, value or "dutch")
@@ -224,8 +216,8 @@ def normalize_location(value: object) -> str:
 
 
 def country_aliases(country: str | None) -> set[str]:
+    canonical = standardize_country_name(country)
+    if canonical:
+        return {alias.lower() for alias in COUNTRY_ALIASES.get(canonical, set()) | {canonical}}
     value = str(country or "").strip().lower()
-    aliases = set(COUNTRY_NAME_ALIASES.get(value, set()))
-    if value:
-        aliases.add(value)
-    return aliases
+    return {value} if value else set()

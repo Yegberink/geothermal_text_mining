@@ -98,6 +98,8 @@ Running `snakemake` with no explicit target builds these outputs for every disco
 - `output/figures/all_languages_frames_country_sentiment_balance_table.csv`
 - `output/figures/all_languages_frames_country_sentiment_balance.png`
 - `output/figures/all_languages_extreme_province_frame_shares_table.csv`
+- `output/figures/all_languages_frames_extreme_region_sentiment_balance_table.csv`
+- `output/figures/all_languages_frames_extreme_region_sentiment_balance.png`
 - `output/figures/frame_mentions_100pct_stacked_table.csv`
 - `output/figures/frame_mentions_100pct_stacked.png`
 - `output/figures/frame_mentions_100pct_stacked.pdf`
@@ -130,7 +132,38 @@ using a zero-shot prompt. This is configured in `config/config.yaml` under `sent
 
 ## Geographic scope
 
-The workflow separates text language from geographic scope. For German-language text, `config/config.yaml` uses `German-speaking countries`; local shape matching, GeoNames, and manual overrides allow matches in Germany, Austria, and Switzerland. Country-level fallback values are kept at country scope rather than being forced into a NUTS2 region.
+The workflow separates text language from geographic scope. `language` controls language resources and prompts; `country_scope` controls the allowed countries for location extraction, geocoding, aggregation, and country-specific figures.
+
+German-language text uses one language scope with three canonical countries:
+
+```yaml
+country_scope:
+  countries_by_language:
+    german:
+      - Germany
+      - Austria
+      - Switzerland
+```
+
+Dutch and Italian use the same structure with one country (`Netherlands` and `Italy`). Country fallback is automatic only when the scope has exactly one canonical country. In a multi-country scope, unresolved fallback rows keep `llm_location = NONE`, store the possible countries in `llm_country_candidates`, and are flagged for review instead of being geocoded as a fake country group.
+
+Country-specific averages and country-level visualisations include only rows with one canonical country (`llm_country_assignment_type == single_country`, or an equivalent geocoded country field). Rows with multiple possible countries or no single country are intentionally excluded from country-specific averages, but they remain in the general frame-level sentiment analysis.
+
+Migration note: replace legacy German config such as:
+
+```yaml
+country: German-speaking countries
+```
+
+with:
+
+```yaml
+country_scope:
+  countries:
+    - Germany
+    - Austria
+    - Switzerland
+```
 
 ## Geocoding Overrides and Online Cache
 

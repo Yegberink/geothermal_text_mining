@@ -9,6 +9,7 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
+from country_scope import country_name_for_id, country_scope_from_args
 from shape_resources import load_shapes_parquet, nuts2_shapes
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -20,7 +21,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--input-gpkg", type=str, default="output/text/sentences_with_categories.gpkg")
     ap.add_argument("--input-layer", type=str, default="sentences_with_categories")
     ap.add_argument("--shapes-parquet", type=str, default="data/shapes.parquet")
-    ap.add_argument("--country", type=str, default="")
+    ap.add_argument("--country", type=str, default="", help="Backward-compatible single-country shorthand.")
+    ap.add_argument("--countries", nargs="+", default=None)
+    ap.add_argument("--country-scope", type=str, default="")
     ap.add_argument("--output-gpkg", type=str, default="output/text/sentences_with_categories_admin.gpkg")
     ap.add_argument("--output-layer", type=str, default="sentences_with_categories_admin")
     ap.add_argument("--output-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
@@ -36,9 +39,28 @@ def assign_nuts2(text_gdf: gpd.GeoDataFrame, nuts2: gpd.GeoDataFrame) -> gpd.Geo
         raise ValueError("NUTS2 geometries have no CRS.")
     if nuts2.crs != text_gdf.crs:
         nuts2 = nuts2.to_crs(text_gdf.crs)
-    for col in ["nuts2_id", "nuts2_name", "province_code", "province_name", "country_id"]:
+    for col in ["nuts2_id", "nuts2_name", "province_code", "province_name", "country_id", "country_name", "admin_level"]:
         if col not in text_gdf.columns:
             text_gdf[col] = None
+
+    country_rows = (
+        text_gdf["geo_level"].astype(str).str.lower().eq("country")
+        if "geo_level" in text_gdf.columns
+        else pd.Series(False, index=text_gdf.index)
+    )
+    if country_rows.any():
+        country_names = (
+            text_gdf.loc[country_rows, "llm_country"]
+            if "llm_country" in text_gdf.columns
+            else pd.Series(index=text_gdf.index[country_rows], dtype=object)
+        )
+        fallback_names = text_gdf.loc[country_rows, "country_id"].map(country_name_for_id)
+        country_names = country_names.where(country_names.notna() & country_names.astype(str).str.strip().ne(""), fallback_names)
+        country_names = country_names.where(country_names.notna() & country_names.astype(str).str.strip().ne(""), text_gdf.loc[country_rows, "geo_name_matched"])
+        text_gdf.loc[country_rows, "country_name"] = country_names.values
+        text_gdf.loc[country_rows, "province_name"] = country_names.values
+        text_gdf.loc[country_rows, "province_code"] = text_gdf.loc[country_rows, "country_id"].values
+        text_gdf.loc[country_rows, "admin_level"] = "country"
 
     non_country = (
         text_gdf["geo_level"].astype(str).str.lower().ne("country")
@@ -60,10 +82,12 @@ def assign_nuts2(text_gdf: gpd.GeoDataFrame, nuts2: gpd.GeoDataFrame) -> gpd.Geo
     if matched.any():
         idx = joined.loc[matched].index
         text_gdf.loc[idx, "country_id"] = joined.loc[matched, "country_id"].values
+        text_gdf.loc[idx, "country_name"] = joined.loc[matched, "country_id"].map(country_name_for_id).values
         text_gdf.loc[idx, "nuts2_id"] = joined.loc[matched, "parent_id"].values
         text_gdf.loc[idx, "nuts2_name"] = joined.loc[matched, "parent_name"].values
         text_gdf.loc[idx, "province_code"] = joined.loc[matched, "parent_id"].values
         text_gdf.loc[idx, "province_name"] = joined.loc[matched, "parent_name"].values
+        text_gdf.loc[idx, "admin_level"] = "nuts2"
     return text_gdf
 
 
@@ -78,7 +102,12 @@ def main() -> None:
     text_gdf = text_gdf.to_crs("EPSG:4326")
 
     shapes = load_shapes_parquet(args.shapes_parquet)
-    nuts2 = nuts2_shapes(shapes, args.country).to_crs(text_gdf.crs)
+    country_scope = country_scope_from_args(
+        country=args.country,
+        countries=args.countries,
+        country_scope=args.country_scope,
+    )
+    nuts2 = nuts2_shapes(shapes, country_scope.label).to_crs(text_gdf.crs)
     text_gdf = assign_nuts2(text_gdf, nuts2)
 
     Path(args.output_gpkg).parent.mkdir(parents=True, exist_ok=True)

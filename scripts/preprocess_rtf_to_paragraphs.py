@@ -28,6 +28,8 @@ import warnings
 
 import pandas as pd
 import yaml
+
+from country_scope import country_scope_from_config
 from striprtf.striprtf import rtf_to_text as _striprtf_to_text
 from tqdm.auto import tqdm
 
@@ -225,8 +227,8 @@ def load_workflow_country(config_path: Path, language: str) -> str:
         return language
     with config_path.open("r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
-    countries = config.get("countries", {}) or {}
-    return str(countries.get(language) or config.get("country") or language)
+    scope = country_scope_from_config(config, language)
+    return scope.label or language
 
 
 def resolve_workflow_language(config_path: Path, cli_language: str = "") -> str:

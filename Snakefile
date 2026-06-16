@@ -2,10 +2,15 @@ from pathlib import Path
 import hashlib
 import re
 import shlex
+import sys
 
 configfile: "config/config.yaml"
 
 PROJECT_DIR = Path(workflow.basedir).resolve()
+sys.path.insert(0, str(PROJECT_DIR / "scripts"))
+
+from country_scope import country_scope_from_config, countries_from_value
+
 PYTHON = config.get("python", "python")
 OLLAMA = config["ollama"]
 ONLINE_GEOCODING = config.get("online_geocoding", {})
@@ -66,20 +71,28 @@ def pattern_for(key):
 
 
 def country_for(language):
+    scope = country_scope_from_config(config, language)
+    if scope.countries:
+        return scope.label
     return LANGUAGE_COUNTRIES.get(language) or DEFAULT_COUNTRY or language
 
 
+def countries_for(language):
+    return list(country_scope_from_config(config, language).countries)
+
+
 def _default_country_codes(country):
-    country_norm = str(country or "").strip().lower()
-    mapping = {
-        "netherlands": "nl,be,bq,aw,cw,sx",
-        "italy": "it,sm,va",
-        "germany": "de",
-        "deutschland": "de",
-        "german-speaking countries": "de,at,ch",
-        "german speaking countries": "de,at,ch",
+    codes_by_country = {
+        "Netherlands": ["nl", "be", "bq", "aw", "cw", "sx"],
+        "Italy": ["it", "sm", "va"],
+        "Germany": ["de"],
+        "Austria": ["at"],
+        "Switzerland": ["ch"],
     }
-    return mapping.get(country_norm, "")
+    codes = []
+    for canonical_country in countries_from_value(country):
+        codes.extend(codes_by_country.get(canonical_country, []))
+    return ",".join(dict.fromkeys(codes))
 
 
 def _country_codes_for(language):
@@ -166,6 +179,11 @@ def _shell_join(values):
     return " ".join(shlex.quote(str(value)) for value in values)
 
 
+def _countries_arg(language):
+    countries = countries_for(language)
+    return _shell_join(countries if countries else [country_for(language)])
+
+
 def _geocoding_candidate_specs():
     return _shell_join(
         (
@@ -193,6 +211,8 @@ PER_LANGUAGE_TARGET_KEYS = [
     "locations_map_html",
 ]
 
+DATA_TRACKING_CSV = PATHS.get("data_tracking_csv", "output/text/data_tracking.csv")
+
 OVERARCHING_TARGETS = [
     "output/figures/all_languages_province_sentiment_balance.png",
     "output/figures/all_languages_province_sentiment_table.csv",
@@ -201,10 +221,13 @@ OVERARCHING_TARGETS = [
     "output/figures/all_languages_frames_country_sentiment_balance.png",
     "output/figures/all_languages_frames_country_sentiment_balance_table.csv",
     "output/figures/all_languages_extreme_province_frame_shares_table.csv",
+    "output/figures/all_languages_frames_extreme_region_sentiment_balance_table.csv",
+    "output/figures/all_languages_frames_extreme_region_sentiment_balance.png",
     "output/figures/frame_mentions_100pct_stacked_table.csv",
     "output/figures/frame_mentions_100pct_stacked.png",
     "output/figures/frame_mentions_100pct_stacked.pdf",
     "output/figures/all_languages_province_sentiment_map.png",
+    DATA_TRACKING_CSV,
 ]
 
 ALL_TARGETS = [
@@ -216,6 +239,31 @@ ALL_TARGETS.extend(OVERARCHING_TARGETS)
 if MAKE_ANNOTATION_DF:
     ALL_TARGETS.extend(path_for(language, "annotation_sentences_csv") for language in LANGUAGES)
     ALL_TARGETS.append("annotation/sentences_for_annotation_all_languages.csv")
+
+
+TRACKING_STAGE_KEYS = [
+    "articles_csv",
+    "paragraphs_csv",
+    "paragraph_keyword_filtered_csv",
+    "paragraph_geothermal_csv",
+    "paragraph_locations_csv",
+    "paragraph_shapes_geocoding_csv",
+    "paragraphs_with_geo_csv",
+    "geocoding_unmatched_csv",
+    "sentence_locations_csv",
+    "sentences_with_frames_long_csv",
+    "sentence_sentiment_csv",
+    "sentences_with_categories_long_csv",
+    "sentences_with_categories_admin_csv",
+]
+
+
+def _data_tracking_inputs(wildcards=None):
+    files = [str(PROJECT_DIR / "scripts" / "build_data_tracking_table.py")]
+    for language in LANGUAGES:
+        files.extend(_rtf_chunks(language))
+        files.extend(path_for(language, key) for key in TRACKING_STAGE_KEYS)
+    return files
 
 
 rule all:
@@ -315,6 +363,7 @@ rule classify_geothermal:
         sleep_s=OLLAMA["sleep_s"],
         save_every=OLLAMA["save_every"],
         country=lambda wildcards: country_for(wildcards.language),
+        countries=lambda wildcards: _countries_arg(wildcards.language),
     shell:
         """
         {PYTHON} scripts/is_geothermal.py \
@@ -327,6 +376,7 @@ rule classify_geothermal:
           --ollama-url {params.url} \
           --model {params.model} \
           --country "{params.country}" \
+          --countries {params.countries} \
           --sleep-s {params.sleep_s} \
           --save-every {params.save_every}
         """
@@ -346,6 +396,7 @@ rule extract_locations:
         sleep_s=OLLAMA["sleep_s"],
         save_every=OLLAMA["save_every"],
         country=lambda wildcards: country_for(wildcards.language),
+        countries=lambda wildcards: _countries_arg(wildcards.language),
     shell:
         """
         {PYTHON} scripts/locations_ollama.py \
@@ -358,6 +409,7 @@ rule extract_locations:
           --ollama-url {params.url} \
           --model {params.model} \
           --country "{params.country}" \
+          --countries {params.countries} \
           --sleep-s {params.sleep_s} \
           --save-every {params.save_every}
         """
@@ -372,6 +424,7 @@ rule geocode_paragraphs_shapes:
         csv=pattern_for("paragraph_shapes_geocoding_csv"),
     params:
         country=lambda wildcards: country_for(wildcards.language),
+        countries=lambda wildcards: _countries_arg(wildcards.language),
     shell:
         """
         {PYTHON} scripts/geocoding_offline.py \
@@ -381,6 +434,7 @@ rule geocode_paragraphs_shapes:
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv} \
           --country "{params.country}" \
+          --countries {params.countries} \
           --points-layer paragraphs_points \
           --polygons-layer paragraphs_polygons
         """
@@ -398,6 +452,7 @@ rule geocode_paragraphs_cache_candidates:
         suggestions=temp("cache/{language}/geocoding_cache_suggestions.csv"),
     params:
         country=lambda wildcards: country_for(wildcards.language),
+        countries=lambda wildcards: _countries_arg(wildcards.language),
         country_codes=lambda wildcards: _country_codes_for(wildcards.language),
         geonames_dir=ONLINE_GEOCODING.get("geonames_dir", "cache/geonames"),
         geonames_country_codes=lambda wildcards: _geonames_country_codes_for(wildcards.language),
@@ -417,6 +472,7 @@ rule geocode_paragraphs_cache_candidates:
           --geonames-dir {params.geonames_dir} \
           --geonames-country-codes "{params.geonames_country_codes}" \
           --country "{params.country}" \
+          --countries {params.countries} \
           --country-codes "{params.country_codes}" \
           --points-layer paragraphs_points \
           --polygons-layer paragraphs_polygons
@@ -495,6 +551,7 @@ rule geocode_paragraphs_final:
         cache=PATHS["geocoder_cache_all_jsonl"],
         legacy_cache=lambda wildcards: path_for(wildcards.language, "geocoder_cache_jsonl"),
         country=lambda wildcards: country_for(wildcards.language),
+        countries=lambda wildcards: _countries_arg(wildcards.language),
         country_codes=lambda wildcards: _country_codes_for(wildcards.language),
         geonames_dir=ONLINE_GEOCODING.get("geonames_dir", "cache/geonames"),
         geonames_country_codes=lambda wildcards: _geonames_country_codes_for(wildcards.language),
@@ -514,6 +571,7 @@ rule geocode_paragraphs_final:
           --geonames-dir {params.geonames_dir} \
           --geonames-country-codes "{params.geonames_country_codes}" \
           --country "{params.country}" \
+          --countries {params.countries} \
           --country-codes "{params.country_codes}" \
           --points-layer paragraphs_points \
           --polygons-layer paragraphs_polygons
@@ -637,6 +695,7 @@ rule aggregate_to_admin_areas:
         csv=pattern_for("sentences_with_categories_admin_csv"),
     params:
         country=lambda wildcards: country_for(wildcards.language),
+        countries=lambda wildcards: _countries_arg(wildcards.language),
         location_overrides=lambda wildcards: _language_resource_path(wildcards.language, "location_province_overrides.csv"),
     shell:
         """
@@ -646,6 +705,7 @@ rule aggregate_to_admin_areas:
           --input-layer sentences_with_categories \
           --shapes-parquet {input.shapes} \
           --country "{params.country}" \
+          --countries {params.countries} \
           --output-gpkg {output.gpkg} \
           --output-csv {output.csv} \
           --location-province-overrides {params.location_overrides}
@@ -692,6 +752,7 @@ rule visualize_absa_results:
     params:
         output_dir=lambda wildcards: path_for(wildcards.language, "figures_dir"),
         country=lambda wildcards: country_for(wildcards.language),
+        countries=lambda wildcards: _countries_arg(wildcards.language),
         location_overrides=lambda wildcards: _language_resource_path(wildcards.language, "location_province_overrides.csv"),
     shell:
         """
@@ -703,6 +764,7 @@ rule visualize_absa_results:
           --shapes-parquet {input.shapes} \
           --output-dir {params.output_dir} \
           --country "{params.country}" \
+          --countries {params.countries} \
           --location-province-overrides {params.location_overrides}
         """
 
@@ -720,6 +782,8 @@ rule visualize_overarching_results:
         frame_country_balance="output/figures/all_languages_frames_country_sentiment_balance.png",
         frame_country_balance_table="output/figures/all_languages_frames_country_sentiment_balance_table.csv",
         extreme_province_frame_shares_table="output/figures/all_languages_extreme_province_frame_shares_table.csv",
+        frame_extreme_region_balance_table="output/figures/all_languages_frames_extreme_region_sentiment_balance_table.csv",
+        frame_extreme_region_balance="output/figures/all_languages_frames_extreme_region_sentiment_balance.png",
         frame_mentions_stacked_table="output/figures/frame_mentions_100pct_stacked_table.csv",
         frame_mentions_stacked_png="output/figures/frame_mentions_100pct_stacked.png",
         frame_mentions_stacked_pdf="output/figures/frame_mentions_100pct_stacked.pdf",
@@ -737,6 +801,22 @@ rule visualize_overarching_results:
           --admin-csvs {input.admin_csvs} \
           --shapes-parquet {input.shapes} \
           --output-dir {params.output_dir}
+        """
+
+
+rule build_data_tracking_table:
+    input:
+        _data_tracking_inputs,
+    output:
+        DATA_TRACKING_CSV,
+    params:
+        languages=_shell_join(LANGUAGES),
+    shell:
+        """
+        {PYTHON} scripts/build_data_tracking_table.py \
+          --project-dir {PROJECT_DIR} \
+          --languages {params.languages} \
+          --output-csv {output}
         """
 
 

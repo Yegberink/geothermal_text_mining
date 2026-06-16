@@ -19,6 +19,8 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from tqdm.auto import tqdm
 
+from country_scope import country_scope_from_args
+
 SYSTEM = (
     "You are a careful text classification assistant. "
     "You decide whether a newspaper paragraph is mainly about geothermal energy."
@@ -352,9 +354,16 @@ def main():
 
     ap.add_argument("--ollama-url", type=str, default="http://localhost:11434/api/generate")
     ap.add_argument("--model", type=str, default="llama3.1:8b")
-    ap.add_argument("--country", type=str, default="Nederland")
+    ap.add_argument("--country", type=str, default="Nederland", help="Backward-compatible single-country shorthand.")
+    ap.add_argument("--countries", nargs="+", default=None)
+    ap.add_argument("--country-scope", type=str, default="")
 
     args = ap.parse_args()
+    country_scope = country_scope_from_args(
+        country=args.country,
+        countries=args.countries,
+        country_scope=args.country_scope,
+    )
 
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
@@ -388,7 +397,7 @@ def main():
         sleep_s=args.sleep_s,
         ollama_url=args.ollama_url,
         model=args.model,
-        country=args.country,
+        country=country_scope.label,
         partial_csv_path=Path(args.partial_csv) if args.partial_csv else None,
     )
 

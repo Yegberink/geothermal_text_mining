@@ -18,22 +18,13 @@ from matplotlib.lines import Line2D
 import pandas as pd
 from shapely.geometry import LineString, Point, box
 
+from country_scope import COUNTRY_ORDER, countries_from_value, country_name_for_id, single_country_from_row
 from shape_resources import load_shapes_parquet, nuts2_shapes
+from visual_constants import SENTIMENT_COLORS, SENTIMENT_ORDER, country_color
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
 
-SENTIMENT_ORDER = ["negative", "neutral", "positive"]
-SENTIMENT_COLORS = {
-    "negative": "#D55E00",
-    "neutral": "#999999",
-    "positive": "#009E73",
-}
-COUNTRY_COLORS = {
-    "dutch": "#2C7BB6",
-    "german": "#7F3C8D",
-    "italian": "#E69F00",
-}
-MIN_PROVINCE_SENTENCES = 100
+MIN_PROVINCE_SENTENCES = 30
 STACKED_FRAME_ORDER = [
     "Operational risk",
     "Technological uncertainty",
@@ -51,6 +42,25 @@ STACKED_FRAME_COLORS = {
     "Costs": "#9D755D",
     "Infrastructure": "#72B7B2",
     "Sustainability": "#E45756",
+}
+MAP_LABEL_OFFSETS = {
+    ("Netherlands", "Most negative province"): (-56, -42),
+    ("Netherlands", "Most positive province"): (-80, -26),
+    ("Germany", "Most negative province"): (-56, 52),
+    ("Germany", "Most positive province"): (62, 38),
+    ("Austria", "Most negative province"): (110, -12),
+    ("Austria", "Most positive province"): (86, 28),
+    ("Switzerland", "Most negative province"): (-64, -20),
+    ("Switzerland", "Most positive province"): (-50, -50),
+    ("Italy", "Most negative province"): (54, -22),
+    ("Italy", "Most positive province"): (74, -8),
+}
+COUNTRY_LABEL_CODES = {
+    "Austria": "AT",
+    "Germany": "DE",
+    "Italy": "IT",
+    "Netherlands": "NL",
+    "Switzerland": "CH",
 }
 
 
@@ -139,11 +149,20 @@ def configure_plot_style() -> None:
     )
 
 
-def country_color(language: str) -> str:
-    if language in COUNTRY_COLORS:
-        return COUNTRY_COLORS[language]
-    palette = ["#2C7BB6", "#7F3C8D", "#E69F00", "#009E73", "#CC6677"]
-    return palette[abs(hash(language)) % len(palette)]
+def country_sort_key(country: object) -> tuple[int, str]:
+    value = str(country or "").strip()
+    country_order = {country_name: idx for idx, country_name in enumerate(COUNTRY_ORDER)}
+    return country_order.get(value, len(country_order)), value
+
+
+def label_with_country_code(region: object, country: object) -> str:
+    label = str(region or "").strip()
+    code = COUNTRY_LABEL_CODES.get(str(country or "").strip())
+    if not label or not code:
+        return label
+    if re.search(rf"\({re.escape(code)}\)\s*$", label):
+        return label
+    return f"{label} ({code})"
 
 
 def pick_col_by_regex(cols: list[str], patterns: list[str]) -> str | None:
@@ -179,7 +198,7 @@ def read_admin_tables(
     admin_csvs: list[str],
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
-    for language, country, path in zip(languages, countries, admin_csvs, strict=True):
+    for language, country_scope_label, path in zip(languages, countries, admin_csvs, strict=True):
         df = pd.read_csv(path)
         sentiment_col = "sentiment_norm" if "sentiment_norm" in df.columns else "sentiment"
         if sentiment_col not in df.columns:
@@ -188,8 +207,24 @@ def read_admin_tables(
         df["_sent"] = normalize_sentiment(df[sentiment_col])
         df = df[df["_sent"].isin(SENTIMENT_ORDER)].copy()
         df["language"] = language
-        df["country"] = country
-        df["country_color"] = country_color(language)
+        df["country_scope"] = country_scope_label
+        scope_countries = countries_from_value(country_scope_label)
+
+        def row_country(row: pd.Series) -> str | None:
+            country = single_country_from_row(row)
+            if country:
+                return country
+            assignment = str(row.get("llm_country_assignment_type", "") or "").strip()
+            if assignment:
+                return None
+            if len(scope_countries) == 1:
+                return scope_countries[0]
+            return None
+
+        # Country-specific summaries intentionally exclude rows without one
+        # canonical country, while frame-level sentiment below keeps all rows.
+        df["country"] = df.apply(row_country, axis=1)
+        df["country_color"] = df["country"].map(country_color)
         if "province_name" not in df.columns:
             df["province_name"] = pd.NA
         frames.append(df)
@@ -213,8 +248,9 @@ def counts_to_summary(counts: pd.DataFrame) -> pd.DataFrame:
 
 def build_province_sentiment_table(admin_df: pd.DataFrame, languages: list[str]) -> pd.DataFrame:
     df = admin_df.copy()
+    country_df = df[df["country"].notna() & df["country"].astype(str).str.strip().ne("")].copy()
     has_province = df["province_name"].notna() & df["province_name"].astype(str).str.strip().ne("")
-    province_df = df.loc[has_province].copy()
+    province_df = df.loc[has_province & df["country"].notna()].copy()
     province_df["province_name"] = province_df["province_name"].astype(str).str.strip()
 
     province_counts = (
@@ -228,7 +264,7 @@ def build_province_sentiment_table(admin_df: pd.DataFrame, languages: list[str])
     province_summary["display_name"] = province_summary["province_name"]
 
     average_counts = (
-        df.groupby(["language", "country", "country_color", "_sent"])
+        country_df.groupby(["language", "country", "country_color", "_sent"])
         .size()
         .unstack(fill_value=0)
     )
@@ -240,12 +276,13 @@ def build_province_sentiment_table(admin_df: pd.DataFrame, languages: list[str])
     out = pd.concat([average_summary, province_summary], ignore_index=True, sort=False)
     language_order = {language: idx for idx, language in enumerate(languages)}
     out["_language_order"] = out["language"].map(language_order).fillna(len(language_order)).astype(int)
+    out["_country_order"] = out["country"].map(lambda country: country_sort_key(country)[0]).astype(int)
     out["_average_order"] = out["is_country_average"].map({True: 0, False: 1}).astype(int)
     out = out.sort_values(
-        ["_language_order", "_average_order", "polarity_balance", "n_text_units", "province_name"],
-        ascending=[True, True, True, False, True],
+        ["_language_order", "_country_order", "country", "_average_order", "polarity_balance", "n_text_units", "province_name"],
+        ascending=[True, True, True, True, True, False, True],
     ).reset_index(drop=True)
-    return out.drop(columns=["_language_order", "_average_order"])
+    return out.drop(columns=["_language_order", "_country_order", "_average_order"])
 
 
 def plot_province_balance(province_tbl: pd.DataFrame, out_path: Path) -> None:
@@ -294,7 +331,7 @@ def plot_province_balance(province_tbl: pd.DataFrame, out_path: Path) -> None:
         )
 
     ax.axvline(0, color="black", linewidth=0.8)
-    ax.set_xlabel("Percentage of sentences (%)")
+    ax.set_xlabel("Percentage of sentences (%)", labelpad=24)
     ax.set_ylabel("")
     ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{abs(x):.0f}%"))
     ax.set_xlim(-x_limit, x_limit)
@@ -323,6 +360,27 @@ def plot_province_balance(province_tbl: pd.DataFrame, out_path: Path) -> None:
         start = int(group.index.min())
         if start > 0:
             ax.axhline(start - 0.5, color="#cfcfcf", linewidth=0.8)
+
+    ax.text(
+        0.25,
+        -0.062,
+        "Negative share",
+        transform=ax.transAxes,
+        ha="center",
+        va="top",
+        fontsize=9,
+        color="#4a4a4a",
+    )
+    ax.text(
+        0.75,
+        -0.062,
+        "Positive share",
+        transform=ax.transAxes,
+        ha="center",
+        va="top",
+        fontsize=9,
+        color="#4a4a4a",
+    )
 
     handles = [
         SplitCountrySwatch(row["country_color"])
@@ -475,8 +533,10 @@ def build_country_frame_balance_table(admin_df: pd.DataFrame, languages: list[st
     frame_rank = {frame: idx for idx, frame in enumerate(frame_order)}
     frame_summary["_language_order"] = frame_summary["language"].map(language_order).fillna(len(language_order)).astype(int)
     frame_summary["_frame_order"] = frame_summary["frame"].map(frame_rank).fillna(len(frame_rank)).astype(int)
-    frame_summary = frame_summary.sort_values(["_frame_order", "_language_order"]).reset_index(drop=True)
-    return frame_summary.drop(columns=["_language_order", "_frame_order"])
+    country_order = {country: idx for idx, country in enumerate(COUNTRY_ORDER)}
+    frame_summary["_country_order"] = frame_summary["country"].map(country_order).fillna(len(country_order)).astype(int)
+    frame_summary = frame_summary.sort_values(["_frame_order", "_language_order", "_country_order", "country"]).reset_index(drop=True)
+    return frame_summary.drop(columns=["_language_order", "_frame_order", "_country_order"])
 
 
 def plot_country_frame_balance(country_frame_tbl: pd.DataFrame, out_path: Path) -> None:
@@ -501,8 +561,6 @@ def plot_country_frame_balance(country_frame_tbl: pd.DataFrame, out_path: Path) 
     for y in [position + 0.5 for position in y_positions[:-1]]:
         ax.hlines(y, -x_limit, x_limit, color="#e7e7e7", linewidth=0.8, zorder=0)
 
-    label_pad = max(1.4, x_limit * 0.018)
-
     for country_idx, row in country_meta.iterrows():
         country = row["country"]
         values = pivot[country]
@@ -518,21 +576,6 @@ def plot_country_frame_balance(country_frame_tbl: pd.DataFrame, out_path: Path) 
             linewidth=0.7,
             zorder=3,
         )
-
-        for value, y_offset in zip(values, y_offsets, strict=False):
-            if pd.isna(value):
-                continue
-            ax.text(
-                value + (label_pad if value >= 0 else -label_pad),
-                y_offset,
-                f"{value:+.0f}%",
-                ha="left" if value >= 0 else "right",
-                va="center",
-                fontsize=8,
-                color="#1f1f1f",
-                bbox=dict(boxstyle="round,pad=0.18", facecolor="white", edgecolor="none", alpha=0.78),
-                zorder=4,
-            )
 
     ax.set_xlim(-x_limit, x_limit)
     ax.axvline(0, color="black", linewidth=0.8)
@@ -566,8 +609,215 @@ def plot_country_frame_balance(country_frame_tbl: pd.DataFrame, out_path: Path) 
     plt.close(fig)
 
 
+def build_extreme_region_frame_balance_table(
+    admin_df: pd.DataFrame,
+    extreme_tbl: pd.DataFrame,
+    languages: list[str],
+) -> pd.DataFrame:
+    columns = [
+        "language",
+        "country",
+        "country_color",
+        "province_role",
+        "province_name",
+        "province_polarity_balance",
+        "province_n_text_units",
+        "region_label",
+        "frame",
+        "n_neg",
+        "n_neu",
+        "n_pos",
+        "n_text_units",
+        "pct_neg",
+        "pct_neu",
+        "pct_pos",
+        "polarity_balance",
+    ]
+    if extreme_tbl.empty:
+        return pd.DataFrame(columns=columns)
+
+    selected = extreme_tbl[
+        [
+            "language",
+            "country",
+            "country_color",
+            "province_role",
+            "province_name",
+            "province_polarity_balance",
+            "province_n_text_units",
+        ]
+    ].drop_duplicates().copy()
+    if selected.empty:
+        return pd.DataFrame(columns=columns)
+
+    selected["province_name"] = selected["province_name"].astype(str).str.strip()
+    selected["region_label"] = selected.apply(lambda row: label_with_country_code(row["province_name"], row["country"]), axis=1)
+
+    frame_df = explode_frame_sentiments(admin_df)
+    frame_df["province_name"] = frame_df.get("province_name", pd.Series(index=frame_df.index, dtype=object)).astype(str).str.strip()
+    frame_order = (
+        counts_to_summary(frame_df.groupby(["frame", "_sent"]).size().unstack(fill_value=0))
+        .sort_values(["polarity_balance", "n_text_units"], ascending=[True, False])
+        .index.astype(str)
+        .tolist()
+    )
+
+    selected_frame_df = frame_df.merge(
+        selected[
+            [
+                "language",
+                "country",
+                "country_color",
+                "province_role",
+                "province_name",
+                "province_polarity_balance",
+                "province_n_text_units",
+                "region_label",
+            ]
+        ],
+        on=["language", "country", "country_color", "province_name"],
+        how="inner",
+    )
+    if selected_frame_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    frame_counts = (
+        selected_frame_df.groupby(
+            [
+                "language",
+                "country",
+                "country_color",
+                "province_role",
+                "province_name",
+                "province_polarity_balance",
+                "province_n_text_units",
+                "region_label",
+                "frame",
+                "_sent",
+            ]
+        )
+        .size()
+        .unstack(fill_value=0)
+    )
+    frame_summary = counts_to_summary(frame_counts).reset_index()
+
+    full_index = selected.merge(pd.DataFrame({"frame": frame_order}), how="cross")
+    out = full_index.merge(
+        frame_summary,
+        on=[
+            "language",
+            "country",
+            "country_color",
+            "province_role",
+            "province_name",
+            "province_polarity_balance",
+            "province_n_text_units",
+            "region_label",
+            "frame",
+        ],
+        how="left",
+    )
+    count_cols = ["n_neg", "n_neu", "n_pos", "n_text_units"]
+    out[count_cols] = out[count_cols].fillna(0).astype(int)
+
+    language_order = {language: idx for idx, language in enumerate(languages)}
+    role_order = {"Most negative province": 0, "Most positive province": 1}
+    frame_rank = {frame: idx for idx, frame in enumerate(frame_order)}
+    out["_language_order"] = out["language"].map(language_order).fillna(len(language_order)).astype(int)
+    out["_country_order"] = out["country"].map(lambda country: country_sort_key(country)[0]).astype(int)
+    out["_role_order"] = out["province_role"].map(role_order).fillna(len(role_order)).astype(int)
+    out["_frame_order"] = out["frame"].map(frame_rank).fillna(len(frame_rank)).astype(int)
+    out = out.sort_values(["_frame_order", "_language_order", "_country_order", "country", "_role_order"]).reset_index(drop=True)
+    return out[columns]
+
+
+def plot_extreme_region_frame_balance(region_frame_tbl: pd.DataFrame, out_path: Path) -> None:
+    if region_frame_tbl.empty:
+        raise ValueError("No extreme-region frame sentiment balance rows were available to plot.")
+
+    role_titles = {
+        "Most negative province": "Most negative regions",
+        "Most positive province": "Most positive regions",
+    }
+    role_order = list(role_titles)
+    frames = region_frame_tbl["frame"].drop_duplicates().tolist()
+    max_abs_value = region_frame_tbl["polarity_balance"].abs().max(skipna=True)
+    max_abs = 0.0 if pd.isna(max_abs_value) else float(max_abs_value)
+    x_limit = max(60, max_abs + 14)
+
+    configure_plot_style()
+    fig_height = max(5.4, 0.74 * len(frames) + 2.8)
+    fig, axes = plt.subplots(ncols=2, sharey=True, figsize=(13.8, fig_height), dpi=300)
+    y_positions = list(range(len(frames)))
+
+    for ax, role in zip(axes, role_order, strict=True):
+        role_df = region_frame_tbl[region_frame_tbl["province_role"].eq(role)].copy()
+        region_meta = role_df[["country", "country_color", "region_label"]].drop_duplicates().reset_index(drop=True)
+        pivot = role_df.pivot_table(index="frame", columns="region_label", values="polarity_balance", aggfunc="first")
+        pivot = pivot.reindex(index=frames, columns=region_meta["region_label"])
+
+        bar_height = min(0.2, 0.66 / max(len(region_meta), 1))
+        center_offset = (len(region_meta) - 1) / 2
+        for y in [position + 0.5 for position in y_positions[:-1]]:
+            ax.hlines(y, -x_limit, x_limit, color="#e7e7e7", linewidth=0.8, zorder=0)
+
+        for region_idx, row in region_meta.iterrows():
+            values = pivot[row["region_label"]]
+            y_offsets = [y + (region_idx - center_offset) * bar_height for y in y_positions]
+            ax.barh(
+                y_offsets,
+                values,
+                height=bar_height,
+                label=row["region_label"],
+                color=row["country_color"],
+                alpha=0.88,
+                edgecolor="white",
+                linewidth=0.7,
+                zorder=3,
+            )
+
+        ax.set_title(role_titles[role], pad=8)
+        ax.set_xlim(-x_limit, x_limit)
+        ax.axvline(0, color="black", linewidth=0.8)
+        ax.set_yticks(y_positions)
+        ax.set_yticklabels(frames)
+        ax.set_xlabel("Sentiment balance")
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:.0f}%"))
+        ax.grid(False)
+        ax.set_ylim(len(frames) - 0.5, -0.5)
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(0.8)
+            spine.set_color("black")
+
+        handles = [
+            mpatches.Patch(facecolor=row["country_color"], edgecolor="white", alpha=0.88, label=row["region_label"])
+            for _, row in region_meta.iterrows()
+        ]
+        ax.legend(
+            handles=handles,
+            frameon=False,
+            ncol=1,
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.12),
+            handlelength=1.3,
+        )
+
+    axes[1].tick_params(axis="y", labelleft=False)
+    fig.tight_layout(rect=(0, 0.13, 1, 1), w_pad=2.2)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, bbox_inches="tight", pad_inches=0.12)
+    plt.close(fig)
+
+
 def most_negative_positive_provinces(province_summary: pd.DataFrame) -> tuple[pd.Series, pd.Series] | None:
     province_summary = province_summary[~province_summary["is_country_average"]].copy()
+    province_key = province_summary["province_name"].map(normalize_key)
+    country_key = province_summary["country"].map(normalize_key)
+    province_summary = province_summary[
+        province_key.ne(country_key)
+        & ~province_key.isin({"average", "country average"})
+    ].copy()
     if province_summary.empty or province_summary["province_name"].nunique() < 2:
         return None
 
@@ -594,9 +844,20 @@ def build_country_extreme_province_frame_share_table(
     languages: list[str],
 ) -> pd.DataFrame:
     selected_rows: list[dict[str, object]] = []
-    for language in languages:
-        language_summary = province_tbl[province_tbl["language"].astype(str).eq(str(language))]
-        pair = most_negative_positive_provinces(language_summary)
+    language_order = {language: idx for idx, language in enumerate(languages)}
+    summary_groups = province_tbl[["language", "country"]].dropna().drop_duplicates().copy()
+    summary_groups["_language_order"] = summary_groups["language"].map(language_order).fillna(len(language_order)).astype(int)
+    summary_groups["_country_order"] = summary_groups["country"].map(lambda country: country_sort_key(country)[0]).astype(int)
+    summary_groups = summary_groups.sort_values(["_language_order", "_country_order", "country"])
+
+    for _, group_row in summary_groups.iterrows():
+        language = group_row["language"]
+        country = group_row["country"]
+        country_summary = province_tbl[
+            province_tbl["language"].astype(str).eq(str(language))
+            & province_tbl["country"].astype(str).eq(str(country))
+        ]
+        pair = most_negative_positive_provinces(country_summary)
         if pair is None:
             continue
         for role, row in [("Most negative province", pair[0]), ("Most positive province", pair[1])]:
@@ -703,12 +964,12 @@ def build_country_extreme_province_frame_share_table(
     frame_totals = out.groupby("frame")["n_mentions"].sum().sort_values(ascending=True)
     frame_order = {frame: idx for idx, frame in enumerate(frame_totals.index)}
     role_order = {"Most negative province": 0, "Most positive province": 1}
-    language_order = {language: idx for idx, language in enumerate(languages)}
     out["_frame_order"] = out["frame"].map(frame_order).fillna(len(frame_order)).astype(int)
     out["_role_order"] = out["province_role"].map(role_order).fillna(len(role_order)).astype(int)
     out["_language_order"] = out["language"].map(language_order).fillna(len(language_order)).astype(int)
-    out = out.sort_values(["_language_order", "_frame_order", "_role_order"]).reset_index(drop=True)
-    return out.drop(columns=["_language_order", "_frame_order", "_role_order"])
+    out["_country_order"] = out["country"].map(lambda country: country_sort_key(country)[0]).astype(int)
+    out = out.sort_values(["_language_order", "_country_order", "country", "_frame_order", "_role_order"]).reset_index(drop=True)
+    return out.drop(columns=["_language_order", "_country_order", "_frame_order", "_role_order"])
 
 
 def prepare_stacked_frame_data(extreme_tbl: pd.DataFrame) -> pd.DataFrame:
@@ -766,14 +1027,19 @@ def plot_frame_composition_100pct(stacked_df: pd.DataFrame, png_path: Path, pdf_
     row_meta = stacked_df[["country_group", "region", "sentiment_type"]].drop_duplicates().reset_index(drop=True)
     y_positions: list[float] = []
     y_labels: list[str] = []
+    country_boundaries: list[float] = []
 
     current_y = 0.0
-    for _, country_rows in row_meta.groupby("country_group", sort=False):
+    country_gap = 0.82
+    grouped_rows = list(row_meta.groupby("country_group", sort=False))
+    for group_idx, (_, country_rows) in enumerate(grouped_rows):
         for _, row in country_rows.iterrows():
             y_positions.append(current_y)
-            y_labels.append(f"{row['region']}\n{row['sentiment_type']}")
+            y_labels.append(f"{row['country_group']}: {row['region']}\n{row['sentiment_type']}")
             current_y += 1.0
-        current_y += 0.58
+        if group_idx < len(grouped_rows) - 1:
+            country_boundaries.append(current_y - 0.5 + country_gap / 2)
+            current_y += country_gap
 
     row_meta = row_meta.copy()
     row_meta["_y"] = y_positions
@@ -790,8 +1056,12 @@ def plot_frame_composition_100pct(stacked_df: pd.DataFrame, png_path: Path, pdf_
     plot_df["_plot_percentage"] = plot_df["_plot_percentage"].fillna(0)
 
     configure_plot_style()
-    fig, ax = plt.subplots(figsize=(10.0, 6.2), dpi=300)
+    fig_height = max(6.2, 0.62 * len(row_meta) + 2.3)
+    fig, ax = plt.subplots(figsize=(10.6, fig_height), dpi=300)
     bar_height = 0.68
+
+    for boundary in country_boundaries:
+        ax.hlines(boundary, 0, 100, color="#d6d6d6", linewidth=0.9, zorder=0)
 
     for _, row in row_meta.iterrows():
         row_values = (
@@ -844,7 +1114,8 @@ def plot_frame_composition_100pct(stacked_df: pd.DataFrame, png_path: Path, pdf_
         spine.set_linewidth(0.8)
         spine.set_color("black")
     ax.tick_params(axis="y", length=0)
-    ax.grid(False)
+    ax.set_axisbelow(True)
+    ax.xaxis.grid(True, color="#e9e9e9", linewidth=0.65)
 
     legend_handles = [
         mpatches.Patch(facecolor=STACKED_FRAME_COLORS[frame], edgecolor="white", label=frame)
@@ -875,15 +1146,15 @@ def load_province_polygons(
 ) -> gpd.GeoDataFrame:
     frames: list[gpd.GeoDataFrame] = []
     shapes = load_shapes_parquet(shapes_parquet)
-    for language, country in zip(languages, countries, strict=True):
-        gdf = nuts2_shapes(shapes, country)
-        gdf = gdf[["parent_id", "parent_name", "geometry"]].rename(
+    for language, country_scope_label in zip(languages, countries, strict=True):
+        gdf = nuts2_shapes(shapes, country_scope_label)
+        gdf = gdf[["country_id", "parent_id", "parent_name", "geometry"]].rename(
             columns={"parent_id": "province_code", "parent_name": "province_name"}
         ).copy()
         gdf = gdf[gdf["province_name"].ne("")]
         gdf = gdf.to_crs("EPSG:4326")
         gdf["language"] = language
-        gdf["country"] = country
+        gdf["country"] = gdf["country_id"].map(country_name_for_id)
         gdf["_province_key"] = gdf["province_name"].map(normalize_key)
         gdf = gdf.dissolve(by=["language", "country", "_province_key", "province_name"], as_index=False)
         frames.append(gdf)
@@ -977,11 +1248,86 @@ def build_map_points(admin_df: pd.DataFrame) -> pd.DataFrame:
     return points.dropna(subset=["lon", "lat"]).copy()
 
 
+def map_label_polygons(
+    scored_polygons: gpd.GeoDataFrame,
+    label_regions: pd.DataFrame | None = None,
+) -> gpd.GeoDataFrame:
+    label_columns = list(scored_polygons.columns) + ["_label_region", "_label_role", "_label_balance"]
+    empty = gpd.GeoDataFrame(columns=label_columns, geometry="geometry", crs=scored_polygons.crs)
+    if scored_polygons.empty:
+        return empty
+
+    scored = scored_polygons.dropna(subset=["polarity_balance"]).copy()
+    if scored.empty:
+        return empty
+
+    if label_regions is not None and not label_regions.empty:
+        required = {"language", "country", "province_name", "province_role", "province_polarity_balance"}
+        if required.issubset(label_regions.columns):
+            labels = label_regions[list(required)].drop_duplicates().copy()
+            labels["province_name"] = labels["province_name"].astype(str).str.strip()
+            labels["_province_key"] = labels["province_name"].map(normalize_key)
+            labels = labels.rename(
+                columns={
+                    "province_name": "_label_region",
+                    "province_role": "_label_role",
+                    "province_polarity_balance": "_label_balance",
+                }
+            )
+            labels["_label_balance"] = pd.to_numeric(labels["_label_balance"], errors="coerce")
+            labels = labels.dropna(subset=["_label_balance"])
+            merged = scored.merge(labels, on=["language", "country", "_province_key"], how="inner")
+            if not merged.empty:
+                merged = merged.drop_duplicates(subset=["language", "country", "_province_key", "_label_role"])
+                return gpd.GeoDataFrame(merged, geometry="geometry", crs=scored_polygons.crs)
+
+    label_candidates = scored.copy()
+    province_key = label_candidates["province_name"].map(normalize_key)
+    country_key = label_candidates["country"].map(normalize_key)
+    label_candidates = label_candidates[
+        province_key.ne(country_key)
+        & ~province_key.isin({"average", "country average"})
+    ].copy()
+    if label_candidates.empty:
+        return empty
+
+    selected_rows: list[dict[str, object]] = []
+    summary_groups = label_candidates[["language", "country"]].dropna().drop_duplicates().copy()
+    summary_groups["_country_order"] = summary_groups["country"].map(lambda country: country_sort_key(country)[0]).astype(int)
+    summary_groups = summary_groups.sort_values(["_country_order", "country", "language"])
+    for _, group_row in summary_groups.iterrows():
+        group = label_candidates[
+            label_candidates["language"].astype(str).eq(str(group_row["language"]))
+            & label_candidates["country"].astype(str).eq(str(group_row["country"]))
+        ].copy()
+        if group.empty or group["province_name"].nunique() < 2:
+            continue
+        negative_region = group.sort_values(["polarity_balance", "n_text_units", "province_name"], ascending=[True, False, True]).iloc[0]
+        positive_candidates = group[group["province_name"].astype(str).ne(str(negative_region["province_name"]))]
+        if positive_candidates.empty:
+            continue
+        positive_region = positive_candidates.sort_values(
+            ["polarity_balance", "n_text_units", "province_name"],
+            ascending=[False, False, True],
+        ).iloc[0]
+        for role, row in [("Most negative province", negative_region), ("Most positive province", positive_region)]:
+            row_dict = row.to_dict()
+            row_dict["_label_region"] = row["province_name"]
+            row_dict["_label_role"] = role
+            row_dict["_label_balance"] = row["polarity_balance"]
+            selected_rows.append(row_dict)
+
+    if not selected_rows:
+        return empty
+    return gpd.GeoDataFrame(selected_rows, geometry="geometry", crs=scored_polygons.crs)
+
+
 def plot_static_sentiment_map(
     polygons: gpd.GeoDataFrame,
     points: pd.DataFrame,
     country_outlines: gpd.GeoDataFrame,
     out_path: Path,
+    label_regions: pd.DataFrame | None = None,
 ) -> None:
     if polygons.empty:
         raise ValueError("No province polygons matched the cross-language sentiment table.")
@@ -996,11 +1342,12 @@ def plot_static_sentiment_map(
     outlines = country_outlines.to_crs(map_crs) if not country_outlines.empty else country_outlines
     context_outlines = outlines
 
-    cmap = LinearSegmentedColormap.from_list("sentiment_balance", ["#8C510A", "#F5F5F5", "#01665E"])
+    cmap = plt.get_cmap("RdYlGn")
     scored_polygons = plot_polygons[plot_polygons["has_enough_data"]].copy()
     low_data_polygons = plot_polygons[~plot_polygons["has_enough_data"]].copy()
     abs_balance = max(1.0, float(scored_polygons["polarity_balance"].abs().max()) if not scored_polygons.empty else 1.0)
     norm = TwoSlopeNorm(vmin=-abs_balance, vcenter=0, vmax=abs_balance)
+    label_polygons = map_label_polygons(scored_polygons, label_regions)
 
     fig, ax = plt.subplots(figsize=(10.8, 8.4), dpi=220)
     ax.set_facecolor("#DDE9EC")
@@ -1029,12 +1376,47 @@ def plot_static_sentiment_map(
         ax.scatter(
             point_gdf.geometry.x,
             point_gdf.geometry.y,
-            s=1.35,
+            s=0.5,
             c="#202020",
             alpha=0.14,
             linewidths=0,
             zorder=4,
         )
+
+    if not label_polygons.empty:
+        label_polygons["_label_country_order"] = label_polygons["country"].map(lambda country: country_sort_key(country)[0]).astype(int)
+        label_polygons["_label_role_order"] = label_polygons["_label_role"].map(
+            {"Most negative province": 0, "Most positive province": 1}
+        ).fillna(2).astype(int)
+        label_polygons = label_polygons.sort_values(["_label_country_order", "country", "_label_role_order"]).reset_index(drop=True)
+        for _, row in label_polygons.iterrows():
+            point = row.geometry.representative_point()
+            balance = float(row["_label_balance"])
+            country = str(row["country"])
+            role = str(row["_label_role"])
+            offset = MAP_LABEL_OFFSETS.get(
+                (country, role),
+                (-46, -28) if "negative" in role.lower() else (46, 28),
+            )
+            if "negative" in role.lower():
+                edge_color = "#7F2B1D"
+            else:
+                edge_color = "#245E3B"
+            region_label = label_with_country_code(row["_label_region"], country)
+            ax.annotate(
+                f"{region_label}\n{balance:+.0f}%",
+                xy=(point.x, point.y),
+                xytext=offset,
+                textcoords="offset points",
+                ha="right" if offset[0] < 0 else "left",
+                va="center",
+                fontsize=7.8,
+                color="#202020",
+                bbox=dict(boxstyle="round,pad=0.22", facecolor="white", edgecolor=edge_color, linewidth=0.85, alpha=0.88),
+                arrowprops=dict(arrowstyle="-", color=edge_color, linewidth=0.9, shrinkA=1, shrinkB=2),
+                zorder=8,
+                annotation_clip=False,
+            )
 
     def _project_line(coords: list[tuple[float, float]]):
         return gpd.GeoSeries([LineString(coords)], crs="EPSG:4326").to_crs(map_crs).iloc[0]
@@ -1129,7 +1511,7 @@ def plot_static_sentiment_map(
     ax.text(
         0.995,
         -0.055,
-        "Projection: ETRS89 / LAEA Europe (EPSG:3035). Boundaries: data/shapes.parquet.",
+        "Projection: ETRS89 / LAEA Europe (EPSG:3035).",
         transform=ax.transAxes,
         ha="right",
         va="top",
@@ -1181,6 +1563,12 @@ def main() -> None:
 
     extreme_frame_share_tbl = build_country_extreme_province_frame_share_table(admin_df, province_tbl, args.languages)
     extreme_frame_share_tbl.to_csv(output_dir / "all_languages_extreme_province_frame_shares_table.csv", index=False)
+    extreme_region_frame_balance_tbl = build_extreme_region_frame_balance_table(admin_df, extreme_frame_share_tbl, args.languages)
+    extreme_region_frame_balance_tbl.to_csv(output_dir / "all_languages_frames_extreme_region_sentiment_balance_table.csv", index=False)
+    plot_extreme_region_frame_balance(
+        extreme_region_frame_balance_tbl,
+        output_dir / "all_languages_frames_extreme_region_sentiment_balance.png",
+    )
     stacked_frame_tbl = prepare_stacked_frame_data(extreme_frame_share_tbl)
     stacked_frame_tbl.to_csv(output_dir / "frame_mentions_100pct_stacked_table.csv", index=False)
     plot_frame_composition_100pct(
@@ -1198,6 +1586,7 @@ def main() -> None:
         map_points,
         country_outlines,
         output_dir / "all_languages_province_sentiment_map.png",
+        extreme_frame_share_tbl,
     )
 
     print("Wrote:", output_dir / "all_languages_province_sentiment_table.csv")
@@ -1207,6 +1596,8 @@ def main() -> None:
     print("Wrote:", output_dir / "all_languages_frames_country_sentiment_balance_table.csv")
     print("Wrote:", output_dir / "all_languages_frames_country_sentiment_balance.png")
     print("Wrote:", output_dir / "all_languages_extreme_province_frame_shares_table.csv")
+    print("Wrote:", output_dir / "all_languages_frames_extreme_region_sentiment_balance_table.csv")
+    print("Wrote:", output_dir / "all_languages_frames_extreme_region_sentiment_balance.png")
     print("Wrote:", output_dir / "frame_mentions_100pct_stacked_table.csv")
     print("Wrote:", output_dir / "frame_mentions_100pct_stacked.png")
     print("Wrote:", output_dir / "frame_mentions_100pct_stacked.pdf")

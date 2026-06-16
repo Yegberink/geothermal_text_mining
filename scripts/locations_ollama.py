@@ -19,7 +19,13 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from tqdm.auto import tqdm
 
-from shape_resources import country_aliases_for, normalize_key
+from country_scope import (
+    CountryScope,
+    country_assignment_for_location,
+    country_candidates_json,
+    country_scope_from_args,
+)
+from shape_resources import normalize_key
 
 SYSTEM = (
     "You are an assistant that extracts the single primary geographic location "
@@ -36,6 +42,11 @@ LOCATION_TRACKING_DEFAULTS = {
     "llm_document_returned_none": None,
     "llm_country_fallback_applied": False,
     "llm_location_was_country_level": False,
+    "llm_country": None,
+    "llm_country_candidates": "[]",
+    "llm_country_assignment_type": "no_country",
+    "llm_has_single_country": False,
+    "llm_multi_country_scope": False,
 }
 
 
@@ -70,19 +81,39 @@ def normalize_location_key(value: object) -> str:
     return normalize_key(value)
 
 
-def is_country_level_location(location: object, granularity: object, country: str) -> bool:
+def is_country_level_location(location: object, granularity: object, country_scope: CountryScope | str) -> bool:
     if not is_valid_location(location):
         return False
-    gran = str(granularity or "").strip().lower()
-    aliases = country_aliases_for(country)
-    return gran == "country" or normalize_location_key(location) in aliases
+    scope = country_scope if isinstance(country_scope, CountryScope) else country_scope_from_args(country=country_scope)
+    assignment = country_assignment_for_location(location, granularity, scope)
+    return assignment["llm_country_assignment_type"] in {"single_country", "multiple_countries", "no_country"}
 
 
-def normalize_country_payload(payload: dict, country: str) -> dict:
+def normalize_country_payload(payload: dict, country_scope: CountryScope) -> dict:
     result = normalize_location_result(payload)
-    if is_country_level_location(result["location"], result["granularity"], country):
-        result["location"] = country
+    if "llm_country_assignment_type" in payload:
+        for col in [
+            "llm_country",
+            "llm_country_candidates",
+            "llm_country_assignment_type",
+            "llm_has_single_country",
+            "llm_multi_country_scope",
+        ]:
+            result[col] = payload.get(col, LOCATION_TRACKING_DEFAULTS[col])
+        return result
+
+    assignment = country_assignment_for_location(result["location"], result["granularity"], country_scope)
+    result.update(assignment)
+    assignment_type = assignment["llm_country_assignment_type"]
+    if assignment_type == "single_country":
+        result["location"] = assignment["llm_country"]
         result["granularity"] = "country"
+    elif assignment_type == "multiple_countries":
+        result["location"] = "NONE"
+        result["granularity"] = "none"
+    elif str(result["granularity"]).strip().lower() == "country":
+        result["location"] = "NONE"
+        result["granularity"] = "none"
     return result
 
 
@@ -183,6 +214,21 @@ def set_unique_row_index(df: pd.DataFrame, uid_col: str = "uid") -> pd.DataFrame
     return out.set_index(ROW_UID_COL, drop=True)
 
 
+def country_scope_prompt_context(country_scope: CountryScope) -> str:
+    if country_scope.is_single_country:
+        country = country_scope.primary_country
+        return (
+            f"- Primary country of interest: {country}\n"
+            f"- If the primary location is country-level, return exactly this canonical country name: {country}"
+        )
+    return (
+        f"- Allowed countries of interest: {country_scope.label}\n"
+        "- If the primary location is country-level, it must be exactly one of the allowed country names.\n"
+        "- If the text clearly refers to multiple allowed countries without one primary country, return "
+        '"NONE" with granularity "none"; do not return DACH or a country-group label.'
+    )
+
+
 @retry(
     reraise=True,
     stop=stop_after_attempt(3),
@@ -192,17 +238,18 @@ def set_unique_row_index(df: pd.DataFrame, uid_col: str = "uid") -> pd.DataFrame
 def llm_primary_location(
     text: str,
     newspaper_region_name: str,
-    country: str,
+    country_scope: CountryScope,
     ollama_url: str,
     model: str,
 ) -> dict:
+    country_context = country_scope_prompt_context(country_scope)
     prompt = f"""
 Task: Determine the ONE primary geographic location this paragraph is mainly about.
 
 Context:
 - The newspaper's coverage region is: {newspaper_region_name}
 - The paragraph is about geothermal energy.
-- Primary country of interest: {country}
+{country_context}
 
 Rules:
 - Return exactly ONE location name, or "NONE" if no clear primary location.
@@ -241,17 +288,18 @@ Paragraph:
 def llm_document_primary_location(
     document_text: str,
     newspaper_region_name: str,
-    country: str,
+    country_scope: CountryScope,
     ollama_url: str,
     model: str,
 ) -> dict:
+    country_context = country_scope_prompt_context(country_scope)
     prompt = f"""
 Task: Determine the ONE primary geographic location this full newspaper document is mainly about.
 
 Context:
 - The newspaper's coverage region is: {newspaper_region_name}
 - The document contains one or more paragraphs selected for geothermal-energy processing.
-- Primary country of interest: {country}
+{country_context}
 
 Rules:
 - Return exactly ONE location name, or "NONE" if no clear primary location.
@@ -323,49 +371,108 @@ def apply_location_payload(
     source: str,
     review_flag: bool,
     review_reason: Optional[str],
-    country: Optional[str] = None,
+    country_scope: Optional[CountryScope] = None,
 ) -> None:
-    result = normalize_country_payload(payload, country) if country else normalize_location_result(payload)
+    result = normalize_country_payload(payload, country_scope) if country_scope else normalize_location_result(payload)
     out.loc[idxs, "llm_location"] = result["location"]
     out.loc[idxs, "llm_granularity"] = result["granularity"]
     out.loc[idxs, "llm_confidence"] = result["confidence"]
     out.loc[idxs, "llm_reasoning_short"] = result["reasoning_short"]
+    for col in [
+        "llm_country",
+        "llm_country_candidates",
+        "llm_country_assignment_type",
+        "llm_has_single_country",
+        "llm_multi_country_scope",
+    ]:
+        if col in result:
+            out.loc[idxs, col] = result[col]
     out.loc[idxs, "llm_status"] = "ok"
     out.loc[idxs, "llm_error"] = None
     out.loc[idxs, "llm_location_source"] = source
     out.loc[idxs, "llm_location_review_flag"] = bool(review_flag)
     out.loc[idxs, "llm_location_review_reason"] = review_reason
-    out.loc[idxs, "llm_country_fallback_applied"] = source == "country_fallback"
-    if country:
+    out.loc[idxs, "llm_country_fallback_applied"] = source in {"country_fallback", "multi_country_fallback"}
+    if country_scope:
         current_country_level = out.loc[idxs, "llm_location_was_country_level"].map(
             lambda value: False if pd.isna(value) else str(value).strip().lower() in {"1", "true", "yes", "y"}
         )
-        result_country_level = is_country_level_location(
-            result["location"],
-            result["granularity"],
-            country,
-        )
+        result_country_level = result.get("llm_country_assignment_type") in {
+            "single_country",
+            "multiple_countries",
+            "no_country",
+        }
         out.loc[idxs, "llm_location_was_country_level"] = current_country_level | result_country_level
 
 
-def country_fallback_payload(country: str) -> dict:
+def country_fallback_payload(country_scope: CountryScope) -> dict:
+    if country_scope.is_single_country:
+        country = country_scope.primary_country
+        return {
+            "location": country,
+            "granularity": "country",
+            "confidence": 0.0,
+            "reasoning_short": "No clear paragraph- or document-level location; using country fallback.",
+        }
     return {
-        "location": country,
-        "granularity": "country",
+        "location": "NONE",
+        "granularity": "none",
         "confidence": 0.0,
-        "reasoning_short": "No clear paragraph- or document-level location; using country fallback.",
+        "reasoning_short": "No single country-level fallback is possible for a multi-country scope.",
+        "llm_country": None,
+        "llm_country_candidates": country_candidates_json(country_scope.countries),
+        "llm_country_assignment_type": "multiple_countries",
+        "llm_has_single_country": False,
+        "llm_multi_country_scope": True,
     }
+
+
+def country_fallback_source(country_scope: CountryScope) -> str:
+    return "country_fallback" if country_scope.is_single_country else "multi_country_fallback"
+
+
+def country_fallback_review_reason(country_scope: CountryScope, base_reason: str) -> str:
+    if country_scope.is_single_country:
+        return base_reason
+    reason = (
+        "no single country-level fallback is possible for multi-country scope "
+        f"({country_scope.label})"
+    )
+    return f"{base_reason};{reason}" if base_reason else reason
+
+
+def apply_country_metadata_to_existing_rows(out: pd.DataFrame, country_scope: CountryScope) -> pd.DataFrame:
+    out = ensure_location_tracking_columns(out.copy())
+    if "llm_location" not in out.columns or "llm_granularity" not in out.columns:
+        return out
+    for idx, row in out.iterrows():
+        if not is_valid_location(row.get("llm_location")) and str(row.get("llm_granularity", "")).lower() != "country":
+            out.at[idx, "llm_multi_country_scope"] = country_scope.is_multi_country
+            continue
+        result = normalize_country_payload(location_payload_from_row(row), country_scope)
+        out.at[idx, "llm_location"] = result["location"]
+        out.at[idx, "llm_granularity"] = result["granularity"]
+        for col in [
+            "llm_country",
+            "llm_country_candidates",
+            "llm_country_assignment_type",
+            "llm_has_single_country",
+            "llm_multi_country_scope",
+        ]:
+            out.at[idx, col] = result.get(col, LOCATION_TRACKING_DEFAULTS[col])
+    return out
 
 
 def apply_document_location_fallback(
     out: pd.DataFrame,
     text_col: str,
     region_col: str,
-    country: str,
+    country_scope: CountryScope,
     document_location_resolver: Callable[[str, str, str], dict],
 ) -> pd.DataFrame:
     out = out.copy()
     out = ensure_location_tracking_columns(out)
+    out = apply_country_metadata_to_existing_rows(out, country_scope)
     for col, default in [
         ("llm_location_source", None),
         ("llm_location_review_flag", False),
@@ -377,13 +484,11 @@ def apply_document_location_fallback(
     valid_mask = out["llm_location"].map(is_valid_location)
     country_level_mask = pd.Series(
         [
-            is_country_level_location(location, granularity, country)
+            is_country_level_location(location, granularity, country_scope)
             for location, granularity in zip(out["llm_location"], out["llm_granularity"])
         ],
         index=out.index,
     )
-    out.loc[country_level_mask, "llm_location"] = country
-    out.loc[country_level_mask, "llm_granularity"] = "country"
     out.loc[valid_mask, "llm_location_was_country_level"] = country_level_mask.loc[valid_mask]
     paragraph_specific = valid_mask & ~country_level_mask
     out.loc[paragraph_specific & out["llm_location_source"].isna(), "llm_location_source"] = "paragraph"
@@ -411,7 +516,7 @@ def apply_document_location_fallback(
         group_valid = group["llm_location"].map(is_valid_location)
         group_country_level = pd.Series(
             [
-                is_country_level_location(location, granularity, country)
+                is_country_level_location(location, granularity, country_scope)
                 for location, granularity in zip(group["llm_location"], group["llm_granularity"])
             ],
             index=group.index,
@@ -437,36 +542,45 @@ def apply_document_location_fallback(
                 source="document_single_location",
                 review_flag=False,
                 review_reason=None,
-                country=country,
+                country_scope=country_scope,
             )
             fallback_count += len(eligible_idxs)
             continue
 
         if not unique_locations and not group_country.empty:
-            payload = country_fallback_payload(country)
-            apply_location_payload(
-                out,
-                eligible_idxs,
-                payload,
-                source="country_all_document_locations",
-                review_flag=False,
-                review_reason=None,
-                country=country,
-            )
-            country_fallback_count += int((~group_valid.loc[eligible_idxs]).sum())
-            continue
+            unique_countries = [
+                country
+                for country in group_country.get("llm_country", pd.Series(dtype=object)).dropna().astype(str).unique()
+                if country
+            ]
+            if len(unique_countries) == 1:
+                payload = country_fallback_payload(CountryScope((unique_countries[0],)))
+                apply_location_payload(
+                    out,
+                    eligible_idxs,
+                    payload,
+                    source="country_all_document_locations",
+                    review_flag=False,
+                    review_reason=None,
+                    country_scope=country_scope,
+                )
+                country_fallback_count += int((~group_valid.loc[eligible_idxs]).sum())
+                continue
 
         review_reason = "multiple_document_locations" if unique_locations else "no_document_paragraph_locations"
         document_text = document_text_for_group(group, text_col)
-        region_name = str(group.iloc[0].get(region_col, "") or country)
+        region_name = str(group.iloc[0].get(region_col, "") or country_scope.label)
         payload = document_location_resolver(document_text, region_name, str(document_key))
-        document_result = normalize_country_payload(payload, country)
+        document_result = normalize_country_payload(payload, country_scope)
         document_returned_none = not is_valid_location(document_result.get("location"))
         source = "document_llm"
         if document_returned_none:
-            payload = country_fallback_payload(country)
-            source = "country_fallback"
-            review_reason = f"{review_reason};document_llm_no_location"
+            payload = country_fallback_payload(country_scope)
+            source = country_fallback_source(country_scope)
+            review_reason = country_fallback_review_reason(
+                country_scope,
+                f"{review_reason};document_llm_no_location",
+            )
             country_fallback_count += len(eligible_idxs)
         else:
             document_llm_count += len(eligible_idxs)
@@ -477,7 +591,7 @@ def apply_document_location_fallback(
             source=source,
             review_flag=True,
             review_reason=review_reason,
-            country=country,
+            country_scope=country_scope,
         )
         out.loc[eligible_idxs, "llm_document_location_raw"] = document_result["location"]
         out.loc[eligible_idxs, "llm_document_returned_none"] = bool(document_returned_none)
@@ -556,7 +670,7 @@ def batch_primary_locations_resumable(
     sleep_s: float,
     ollama_url: str,
     model: str,
-    country: str,
+    country_scope: CountryScope,
     partial_csv_path: Optional[Path],
 ) -> pd.DataFrame:
     if checkpoint_path.exists():
@@ -581,6 +695,9 @@ def batch_primary_locations_resumable(
         out["llm_status"] = None
         out["llm_error"] = None
         out = ensure_location_tracking_columns(out)
+
+    out = ensure_location_tracking_columns(out)
+    out["llm_multi_country_scope"] = country_scope.is_multi_country
 
     cache: Dict[str, dict] = {}
     if cache_path.exists():
@@ -614,7 +731,7 @@ def batch_primary_locations_resumable(
                 "reasoning_short": "Empty document text.",
             }
 
-        key = _document_fingerprint(document_key, document_text, region_name, country)
+        key = _document_fingerprint(document_key, document_text, region_name, country_scope.cache_key)
         cached = cache_get(key)
         if cached is not None:
             return cached
@@ -622,7 +739,7 @@ def batch_primary_locations_resumable(
         res = llm_document_primary_location(
             document_text=document_text,
             newspaper_region_name=region_name,
-            country=country,
+            country_scope=country_scope,
             ollama_url=ollama_url,
             model=model,
         )
@@ -650,7 +767,7 @@ def batch_primary_locations_resumable(
     try:
         for i in pbar:
             text = str(out.at[i, text_col] if text_col in out.columns else "") or ""
-            region_name = str(out.at[i, region_col] if region_col in out.columns else country) or country
+            region_name = str(out.at[i, region_col] if region_col in out.columns else country_scope.label) or country_scope.label
 
             if not text.strip():
                 out.at[i, "llm_status"] = "empty"
@@ -659,33 +776,47 @@ def batch_primary_locations_resumable(
                 out.at[i, "llm_confidence"] = 0.0
                 out.at[i, "llm_reasoning_short"] = "Empty paragraph."
                 out.at[i, "llm_error"] = None
+                out.at[i, "llm_country"] = None
+                out.at[i, "llm_country_candidates"] = "[]"
+                out.at[i, "llm_country_assignment_type"] = "no_country"
+                out.at[i, "llm_has_single_country"] = False
+                out.at[i, "llm_multi_country_scope"] = country_scope.is_multi_country
                 out.at[i, "llm_paragraph_location_raw"] = "NONE"
                 out.at[i, "llm_paragraph_returned_none"] = None
                 processed_since_save += 1
                 continue
 
-            key = _fingerprint(text, region_name, country)
+            key = _fingerprint(text, region_name, country_scope.cache_key)
             cached = cache_get(key)
 
             try:
                 res = cached if cached is not None else llm_primary_location(
                     text=text,
                     newspaper_region_name=region_name,
-                    country=country,
+                    country_scope=country_scope,
                     ollama_url=ollama_url,
                     model=model,
                 )
                 if cached is None:
                     cache_put(key, res)
 
-                out.at[i, "llm_location"] = res.get("location")
-                out.at[i, "llm_granularity"] = res.get("granularity")
-                out.at[i, "llm_confidence"] = float(res.get("confidence") or 0.0)
-                out.at[i, "llm_reasoning_short"] = res.get("reasoning_short")
+                result = normalize_country_payload(res, country_scope)
+                out.at[i, "llm_location"] = result.get("location")
+                out.at[i, "llm_granularity"] = result.get("granularity")
+                out.at[i, "llm_confidence"] = float(result.get("confidence") or 0.0)
+                out.at[i, "llm_reasoning_short"] = result.get("reasoning_short")
+                for col in [
+                    "llm_country",
+                    "llm_country_candidates",
+                    "llm_country_assignment_type",
+                    "llm_has_single_country",
+                    "llm_multi_country_scope",
+                ]:
+                    out.at[i, col] = result.get(col, LOCATION_TRACKING_DEFAULTS[col])
                 out.at[i, "llm_status"] = "ok"
                 out.at[i, "llm_error"] = None
                 out.at[i, "llm_paragraph_location_raw"] = res.get("location")
-                out.at[i, "llm_paragraph_returned_none"] = not is_valid_location(res.get("location"))
+                out.at[i, "llm_paragraph_returned_none"] = not is_valid_location(result.get("location"))
                 ok += 1
             except Exception as e:
                 out.at[i, "llm_status"] = "error"
@@ -717,7 +848,7 @@ def batch_primary_locations_resumable(
         out=out,
         text_col=text_col,
         region_col=region_col,
-        country=country,
+        country_scope=country_scope,
         document_location_resolver=resolve_document_location,
     )
 
@@ -744,9 +875,16 @@ def main():
 
     ap.add_argument("--ollama-url", type=str, default="http://localhost:11434/api/generate")
     ap.add_argument("--model", type=str, default="llama3.1:8b")
-    ap.add_argument("--country", type=str, default="Nederland")
+    ap.add_argument("--country", type=str, default="Nederland", help="Backward-compatible single-country shorthand.")
+    ap.add_argument("--countries", nargs="+", default=None, help="Canonical country scope, e.g. Germany Austria Switzerland.")
+    ap.add_argument("--country-scope", type=str, default="", help="Comma-separated country scope shorthand.")
 
     args = ap.parse_args()
+    country_scope = country_scope_from_args(
+        country=args.country,
+        countries=args.countries,
+        country_scope=args.country_scope,
+    )
 
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
@@ -757,13 +895,6 @@ def main():
 
     # Keep uid as the content identifier, but align checkpoints on a unique row key.
     df = set_unique_row_index(df)
-
-    df["word_count"] = df[args.text_col].apply(lambda x: len(str(x).split()))
-    input_rows = len(df)
-    df = df[(df["word_count"] >= 20) & (df["word_count"] < 500)].copy()
-    print(f"[workflow_table] paragraphs_before_location_length_filter: {input_rows}")
-    print(f"[workflow_table] paragraphs_after_location_length_filter: {len(df)}")
-
     checkpoint_path = Path(args.checkpoint)
     cache_path = Path(args.cache)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -779,7 +910,7 @@ def main():
         sleep_s=args.sleep_s,
         ollama_url=args.ollama_url,
         model=args.model,
-        country=args.country,
+        country_scope=country_scope,
         partial_csv_path=Path(args.partial_csv) if args.partial_csv else None,
     )
 

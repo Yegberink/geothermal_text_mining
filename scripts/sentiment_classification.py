@@ -219,6 +219,12 @@ def parse_ollama_sentiment_response(raw_response: str) -> dict[str, object]:
     lowered = raw_response.lower()
     lowered_norm = lowered.replace("’", "'").replace("‘", "'")
     refusal_markers = [
+        "can't process text",
+        "cannot process text",
+        "can't process that text",
+        "cannot process that text",
+        "can't analyze this text",
+        "cannot analyze this text",
         "can't perform sentiment analysis",
         "cannot perform sentiment analysis",
         "can't classify the sentiment",
