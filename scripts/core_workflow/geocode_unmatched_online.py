@@ -19,7 +19,7 @@ from geopy.geocoders import Nominatim
 
 from geocoding_online import bias_query, configure_ssl_cert_bundle, geocoder_cache_key
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 NOMINATIM_POLICY_URL = "https://operations.osmfoundation.org/policies/nominatim/"
 
 try:
@@ -35,13 +35,13 @@ class FatalGeocoderConfigurationError(RuntimeError):
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-unmatched-csv", type=str, default="cache/geocoding_unmatched.csv")
-    ap.add_argument("--output-cache", type=str, default="cache/geocoder_cache.jsonl")
+    ap.add_argument("--input-unmatched-csv", type=str, default="output/generic/workflow/geocoding_online_candidates_all.csv")
+    ap.add_argument("--output-cache", type=str, default="cache/geocode_unmatched_online.jsonl")
     ap.add_argument("--provider", choices=["none", "nominatim", "opencage", "photon"], default="none")
     ap.add_argument("--country", type=str, default="")
     ap.add_argument("--country-codes", type=str, default="")
     ap.add_argument("--user-agent", type=str, default="absa-geo-mapper")
-    ap.add_argument("--lock-path", type=str, default="cache/geocoder_cache.lock")
+    ap.add_argument("--lock-path", type=str, default="cache/geocode_unmatched_online.lock")
     ap.add_argument("--api-key", type=str, default=os.environ.get("GEOCODER_API_KEY", ""))
     ap.add_argument("--min-delay-seconds", type=float, default=1.1)
     ap.add_argument("--timeout-seconds", type=int, default=10)

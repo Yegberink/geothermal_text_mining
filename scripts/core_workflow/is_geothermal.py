@@ -12,29 +12,111 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Mapping, Sequence
 
 import pandas as pd
 import requests
+import yaml
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from tqdm.auto import tqdm
 
-from country_scope import country_scope_from_args
+from helpers.country_scope import country_scope_from_args
+from helpers.language_resources import normalize_language, vocab_dir
 
 SYSTEM = (
     "You are a careful text classification assistant. "
     "You decide whether a newspaper paragraph is mainly about geothermal energy."
 )
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 ROW_UID_COL = "_row_uid"
+GEOTHERMAL_LEXICON_CATEGORIES = ("strong", "contextual", "competing")
 
 
-def _fingerprint(text: str, region: str, country: str) -> str:
+def load_geothermal_lexicon(project_dir: Path, language: str | None) -> dict[str, list[str]]:
+    lang = normalize_language(language)
+    path = vocab_dir(project_dir, lang) / "geo_keywords.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"Missing geothermal keyword file: {path}")
+
+    with path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    if not isinstance(data, Mapping):
+        raise ValueError(f"Malformed geothermal vocabulary {path}: document must be a mapping.")
+
+    for category in GEOTHERMAL_LEXICON_CATEGORIES:
+        if category not in data:
+            raise ValueError(
+                f"Malformed geothermal vocabulary {path}: missing category {category!r}."
+            )
+
+    for category in data:
+        if category not in GEOTHERMAL_LEXICON_CATEGORIES:
+            raise ValueError(
+                f"Malformed geothermal vocabulary {path}: invalid category {category!r}."
+            )
+
+    lexicon: dict[str, list[str]] = {}
+    for category in GEOTHERMAL_LEXICON_CATEGORIES:
+        values = data[category]
+        if not isinstance(values, list):
+            raise ValueError(
+                f"Malformed geothermal vocabulary {path}: category {category!r} must be a list."
+            )
+
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"Malformed geothermal vocabulary {path}: "
+                    f"category {category!r} contains a non-string entry."
+                )
+            term = value.strip()
+            if not term or term in seen:
+                continue
+            seen.add(term)
+            cleaned.append(term)
+        lexicon[category] = cleaned
+
+    return lexicon
+
+
+def _format_terms(terms: Sequence[str]) -> str:
+    return ", ".join(str(term).strip() for term in terms if str(term).strip()) or "(none)"
+
+
+def _lexicon_fingerprint_text(geothermal_lexicon: Mapping[str, Sequence[str]]) -> str:
+    payload = {
+        category: list(geothermal_lexicon.get(category, ()))
+        for category in GEOTHERMAL_LEXICON_CATEGORIES
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _sanitize_evidence(value: object) -> str:
+    evidence = "" if value is None else str(value).strip()
+    words = evidence.split()
+    if len(words) > 20:
+        evidence = " ".join(words[:20])
+    elif words:
+        evidence = " ".join(words)
+    return evidence or "No usable evidence."
+
+
+def _fingerprint(
+    text: str,
+    country: str,
+    language: str,
+    geothermal_lexicon: Mapping[str, Sequence[str]],
+) -> str:
     h = hashlib.sha256()
-    h.update((region or "").encode("utf-8"))
-    h.update(b"\n")
     h.update((country or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((language or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update(_lexicon_fingerprint_text(geothermal_lexicon).encode("utf-8"))
     h.update(b"\n")
     h.update((text or "").encode("utf-8"))
     return h.hexdigest()
@@ -82,31 +164,44 @@ def set_unique_row_index(df: pd.DataFrame, uid_col: str = "uid") -> pd.DataFrame
 )
 def llm_is_geothermal(
     text: str,
-    newspaper_region_name: str,
     country: str,
     ollama_url: str,
     model: str,
+    language: str,
+    geothermal_lexicon: Mapping[str, Sequence[str]],
 ) -> dict:
+    strong_terms = _format_terms(geothermal_lexicon.get("strong", ()))
+    contextual_terms = _format_terms(geothermal_lexicon.get("contextual", ()))
+    competing_terms = _format_terms(geothermal_lexicon.get("competing", ()))
+
     prompt = f"""
 Task: Decide whether this paragraph is MAINLY about geothermal energy.
 
-Context:
-- Newspaper coverage region: {newspaper_region_name}
-- Main country of interest: {country}
+Country: {country}
+Language: {language}
 
-Definitions:
-- "Geothermal energy" includes: geothermal heat, deep geothermal, geothermal wells, doublets,
-  drilling for heat, district heating from geothermal, reservoirs/aquifers for heat extraction,
-  geothermal projects/plants, permits, seismicity related to geothermal, geothermal policy/subsidy.
-- It is NOT "mainly geothermal" if geothermal is only mentioned in passing (e.g., a list of renewables),
-  or the paragraph is mainly about something else (gas prices, general climate policy, solar/wind, etc.).
+Language-specific terms:
+- Strong geothermal: {strong_terms}
+- Contextual: {contextual_terms}
+- Competing topics: {competing_terms}
+
+Labels:
+- YES: geothermal energy is clearly the main or substantial subject.
+- NO: geothermal is absent, incidental, or another subject clearly dominates.
+- MAYBE: geothermal is plausible or relevant, but it is unclear whether it is the main subject.
 
 Rules:
-- Output MUST be valid JSON only (no extra text).
-- Keys: is_geothermal, confidence, evidence_short
-- is_geothermal must be one of: YES, NO, MAYBE
-- confidence is a number from 0 to 1
-- evidence_short: <= 20 words, no long quotes, just the key reason.
+- Judge the overall meaning, not keyword count.
+- Strong terms are evidence, not an automatic YES.
+- Contextual terms count only with clear underground-heat or geothermal-system context.
+- Competing terms suggest alternative topics but do not automatically mean NO.
+- A passing mention or inclusion in a list of renewables is NO.
+- Prefer MAYBE over YES when geothermal is not clearly central.
+- Return valid JSON only.
+- Keys: is_geothermal, confidence, evidence_short.
+- is_geothermal must be one of: YES, NO, MAYBE.
+- confidence is a number from 0 to 1.
+- evidence_short must be at most 20 words.
 
 Paragraph:
 {text}
@@ -141,8 +236,14 @@ Paragraph:
             "confidence": 0.0,
             "evidence_short": "Invalid JSON.",
         }
+    if not isinstance(obj, Mapping):
+        return {
+            "is_geothermal": "MAYBE",
+            "confidence": 0.0,
+            "evidence_short": "Invalid JSON.",
+        }
 
-    label = (obj.get("is_geothermal") or "MAYBE").strip().upper()
+    label = str(obj.get("is_geothermal") or "MAYBE").strip().upper()
     if label not in ("YES", "NO", "MAYBE"):
         label = "MAYBE"
 
@@ -153,24 +254,8 @@ Paragraph:
         conf = 0.0
     conf = max(0.0, min(1.0, conf))
 
-    ev = (obj.get("evidence_short") or "").strip()
+    ev = _sanitize_evidence(obj.get("evidence_short"))
     return {"is_geothermal": label, "confidence": conf, "evidence_short": ev}
-
-
-def save_checkpoint(out: pd.DataFrame, checkpoint_path: Path) -> None:
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = checkpoint_path.with_suffix(checkpoint_path.suffix + ".tmp")
-    out.to_parquet(tmp_path, index=True)
-    tmp_path.replace(checkpoint_path)
-
-
-def write_partial_csv(out: pd.DataFrame, partial_csv_path: Optional[Path]) -> None:
-    if partial_csv_path is None:
-        return
-    partial_csv_path.parent.mkdir(parents=True, exist_ok=True)
-    partial_out = out.copy()
-    partial_out[ROW_UID_COL] = partial_out.index
-    partial_out.to_csv(partial_csv_path, index=False, encoding="utf-8")
 
 
 def incomplete_count(out: pd.DataFrame) -> int:
@@ -207,36 +292,20 @@ def write_final_csv_atomic(out: pd.DataFrame, out_csv: Path) -> None:
 def batch_geothermal_resumable(
     df: pd.DataFrame,
     text_col: str,
-    region_col: str,
-    checkpoint_path: Path,
     cache_path: Path,
-    save_every: int,
     sleep_s: float,
     ollama_url: str,
     model: str,
     country: str,
-    partial_csv_path: Optional[Path],
+    language: str,
+    geothermal_lexicon: Mapping[str, Sequence[str]],
 ) -> pd.DataFrame:
-    if checkpoint_path.exists():
-        out = pd.read_parquet(checkpoint_path)
-
-        # Defensive handling for older or differently written checkpoints.
-        out = set_unique_row_index(out)
-
-        out = out.reindex(df.index)
-
-        for c in df.columns:
-            out[c] = df[c]
-        restarted = restart_error_rows(out)
-        if restarted:
-            print(f"[resume] Restarting {restarted} geothermal classification rows that previously errored.")
-    else:
-        out = df.copy()
-        out["llm_is_geothermal"] = None
-        out["llm_geo_confidence"] = 0.0
-        out["llm_geo_evidence_short"] = None
-        out["llm_status"] = None
-        out["llm_error"] = None
+    out = df.copy()
+    out["llm_is_geothermal"] = None
+    out["llm_geo_confidence"] = 0.0
+    out["llm_geo_evidence_short"] = None
+    out["llm_status"] = None
+    out["llm_error"] = None
 
     cache: Dict[str, dict] = {}
     if cache_path.exists():
@@ -270,12 +339,10 @@ def batch_geothermal_resumable(
 
     ok = int((out.get("llm_status") == "ok").sum()) if "llm_status" in out.columns else 0
     err = int((out.get("llm_status") == "error").sum()) if "llm_status" in out.columns else 0
-    processed_since_save = 0
 
     try:
         for i in pbar:
             text = str(out.at[i, text_col] if text_col in out.columns else "") or ""
-            region_name = str(out.at[i, region_col] if region_col in out.columns else country) or country
 
             if not text.strip():
                 out.at[i, "llm_status"] = "empty"
@@ -283,19 +350,19 @@ def batch_geothermal_resumable(
                 out.at[i, "llm_geo_confidence"] = 0.0
                 out.at[i, "llm_geo_evidence_short"] = "Empty paragraph."
                 out.at[i, "llm_error"] = None
-                processed_since_save += 1
                 continue
 
-            key = _fingerprint(text, region_name, country)
+            key = _fingerprint(text, country, language, geothermal_lexicon)
             cached = cache_get(key)
 
             try:
                 res = cached if cached is not None else llm_is_geothermal(
                     text=text,
-                    newspaper_region_name=region_name,
                     country=country,
                     ollama_url=ollama_url,
                     model=model,
+                    language=language,
+                    geothermal_lexicon=geothermal_lexicon
                 )
                 if cached is None:
                     cache_put(key, res)
@@ -311,43 +378,31 @@ def batch_geothermal_resumable(
                 out.at[i, "llm_error"] = repr(e)
                 err += 1
 
-            processed_since_save += 1
             pbar.set_postfix({"ok": ok, "error": err, "cached": cached is not None})
 
             if sleep_s:
                 time.sleep(sleep_s)
 
-            if processed_since_save >= save_every:
-                save_checkpoint(out, checkpoint_path)
-                processed_since_save = 0
-
     except KeyboardInterrupt:
-        save_checkpoint(out, checkpoint_path)
-        write_partial_csv(out, partial_csv_path)
         print(
             f"\nStopped by user. Progress saved to:\n"
-            f"- {checkpoint_path}\n"
-            + (f"- {partial_csv_path}\n" if partial_csv_path is not None else "")
+            f"- {cache_path}\n"
         )
         raise
 
-    save_checkpoint(out, checkpoint_path)
-    write_partial_csv(out, partial_csv_path)
     return out
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/newspapers_cleaned_paragraphs.csv")
-    ap.add_argument("--out-csv", type=str, default="output/text/paragraph_geothermal_ollama.csv")
+    ap.add_argument("--input-csv", type=str, default="output/workflow/newspapers_cleaned_paragraphs.csv")
+    ap.add_argument("--out-csv", type=str, default="output/workflow/paragraph_geothermal_ollama.csv")
 
     ap.add_argument("--text-col", type=str, default="paragraph_text")
     ap.add_argument("--region-col", type=str, default="region_name")
 
-    ap.add_argument("--checkpoint", type=str, default="cache/geo_class_checkpoint.parquet")
-    ap.add_argument("--cache", type=str, default="cache/geo_class_cache.jsonl")
-    ap.add_argument("--partial-csv", type=str, default="cache/geo_class_partial_results.csv")
+    ap.add_argument("--cache", type=str, default="cache/is_geothermal.jsonl")
 
     ap.add_argument("--save-every", type=int, default=25)
     ap.add_argument("--sleep-s", type=float, default=0.0)
@@ -357,6 +412,7 @@ def main():
     ap.add_argument("--country", type=str, default="Nederland", help="Backward-compatible single-country shorthand.")
     ap.add_argument("--countries", nargs="+", default=None)
     ap.add_argument("--country-scope", type=str, default="")
+    ap.add_argument("--language", type=str, default="nl", help="Language for the text analysis.")
 
     args = ap.parse_args()
     country_scope = country_scope_from_args(
@@ -364,7 +420,6 @@ def main():
         countries=args.countries,
         country_scope=args.country_scope,
     )
-
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
 
@@ -373,7 +428,7 @@ def main():
     if "uid" not in df.columns:
         df["uid"] = df.apply(lambda r: make_uid(r.to_dict()), axis=1)
 
-    # Keep uid as the content identifier, but align checkpoints on a unique row key.
+    # Keep uid as the content identifier, but use a unique row key internally.
     df = set_unique_row_index(df)
 
     df["word_count"] = df[args.text_col].apply(lambda x: len(str(x).split()))
@@ -382,23 +437,21 @@ def main():
     print(f"[workflow_table] paragraphs_before_geothermal_length_filter: {input_rows}")
     print(f"[workflow_table] paragraphs_after_geothermal_length_filter: {len(df)}")
 
-    checkpoint_path = Path(args.checkpoint)
     cache_path = Path(args.cache)
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    geothermal_lexicon = load_geothermal_lexicon(project_dir, args.language)
 
     out = batch_geothermal_resumable(
         df=df,
         text_col=args.text_col,
-        region_col=args.region_col,
-        checkpoint_path=checkpoint_path,
         cache_path=cache_path,
-        save_every=args.save_every,
         sleep_s=args.sleep_s,
         ollama_url=args.ollama_url,
         model=args.model,
         country=country_scope.label,
-        partial_csv_path=Path(args.partial_csv) if args.partial_csv else None,
+        language=args.language,
+        geothermal_lexicon=geothermal_lexicon,
     )
 
     out_csv = Path(args.out_csv)
@@ -410,7 +463,7 @@ def main():
     if remaining:
         raise RuntimeError(
             f"Geothermal classification is incomplete ({remaining} rows unfinished). "
-            f"Progress is saved in {checkpoint_path} and {args.partial_csv}; "
+            f"Completed model calls are saved in {cache_path}; "
             "not writing the final Snakemake output CSV."
         )
 

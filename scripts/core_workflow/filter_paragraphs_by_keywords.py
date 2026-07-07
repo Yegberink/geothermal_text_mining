@@ -9,17 +9,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from language_resources import load_keyword_csv
+from helpers.language_resources import load_keyword_csv
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/newspapers_cleaned_paragraphs.csv")
+    ap.add_argument("--input-csv", type=str, default="output/workflow/newspapers_cleaned_paragraphs.csv")
     ap.add_argument("--keywords-csv", type=str, default="cache/keywords_topics_effective.csv")
-    ap.add_argument("--output-csv", type=str, default="output/text/newspapers_keyword_filtered_paragraphs.csv")
+    ap.add_argument("--output-csv", type=str, default="output/workflow/newspapers_keyword_filtered_paragraphs.csv")
     ap.add_argument("--text-col", type=str, default="paragraph_text")
     return ap.parse_args()
 

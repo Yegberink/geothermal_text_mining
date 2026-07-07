@@ -14,12 +14,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import plotly.graph_objects as go
 
-from country_scope import country_scope_from_args, single_country_from_row
-from language_resources import load_keyword_csv, load_location_province_overrides
-from shape_resources import load_shapes_parquet, normalize_key, nuts2_shapes
-from visual_constants import SENTIMENT_COLORS, SENTIMENT_ORDER
+from helpers.country_scope import country_scope_from_args, single_country_from_row
+from helpers.language_resources import load_keyword_csv, load_location_province_overrides
+from helpers.shape_resources import load_shapes_parquet, normalize_key, nuts2_shapes
+from helpers.visual_constants import SENTIMENT_COLORS, SENTIMENT_ORDER
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 DESCRIPTIVE_BLUE = "#3f6f8f"
 MIN_PROVINCE_SENTENCES = 98
@@ -29,11 +29,12 @@ LOCATION_PROVINCE_OVERRIDES = {}
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--admin-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
-    ap.add_argument("--categories-csv", type=str, default="output/text/sentences_with_categories_short.csv")
-    ap.add_argument("--keywords-csv", type=str, default="vocab/keywords_topics.csv")
+    ap.add_argument("--admin-csv", type=str, default="output/workflow/sentences_with_categories_admin.csv")
+    ap.add_argument("--categories-csv", type=str, default="output/workflow/sentences_with_categories_short.csv")
+    ap.add_argument("--keywords-csv", type=str, default="data/vocab/keywords_topics.csv")
     ap.add_argument("--shapes-parquet", type=str, default="data/shapes.parquet")
     ap.add_argument("--output-dir", type=str, default="output/figures")
+    ap.add_argument("--table-dir", type=str, default="output/text")
     ap.add_argument("--country", type=str, default="Netherlands", help="Backward-compatible single-country shorthand.")
     ap.add_argument("--countries", nargs="+", default=None)
     ap.add_argument("--country-scope", type=str, default="")
@@ -752,13 +753,15 @@ def plot_region_frame_figures(
     province_tbl: pd.DataFrame,
     frame_order: list[str],
     out_dir: Path,
+    table_dir: Path,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    table_dir.mkdir(parents=True, exist_ok=True)
     region_summary = eligible_province_summary(province_tbl)
     region_counts = build_region_frame_counts(admin_df, province_tbl)
 
-    region_counts.to_csv(out_dir / "province_frame_counts.csv", index=False)
-    region_summary.to_csv(out_dir / "province_sentiment_summary.csv", index=False)
+    region_counts.to_csv(table_dir / "province_frame_counts.csv", index=False)
+    region_summary.to_csv(table_dir / "province_sentiment_summary.csv", index=False)
 
     for region_name, region_df in region_counts.groupby("province_name", sort=True):
         plot_single_region_frame_counts(
@@ -829,8 +832,10 @@ def plot_frame_keyword_sentiment_distribution(
     pairs_df: pd.DataFrame,
     frame_order: list[str],
     out_dir: Path,
+    index_csv: Path,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    index_csv.parent.mkdir(parents=True, exist_ok=True)
 
     summary_rows: list[dict[str, object]] = []
     for frame in frame_order:
@@ -927,7 +932,7 @@ def plot_frame_keyword_sentiment_distribution(
             }
         )
 
-    pd.DataFrame(summary_rows).to_csv(out_dir / "frame_keyword_figure_index.csv", index=False)
+    pd.DataFrame(summary_rows).to_csv(index_csv, index=False)
 
 
 def truncate_text(text: str, limit: int = 220) -> str:
@@ -1254,12 +1259,14 @@ def main() -> None:
     )
 
     output_dir = Path(args.output_dir)
+    table_dir = Path(args.table_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    table_dir.mkdir(parents=True, exist_ok=True)
     frame_keywords_dir = output_dir / "frame_keywords"
     region_frames_dir = output_dir / "region_frames"
 
     province_tbl = build_province_summary(admin_df, country_label, location_province_overrides)
-    province_tbl.to_csv(output_dir / "province_sentiment_table.csv", index=False)
+    province_tbl.to_csv(table_dir / "province_sentiment_table.csv", index=False)
 
     plot_province_sentiment_balance(
         province_tbl,
@@ -1278,6 +1285,7 @@ def main() -> None:
         province_tbl,
         frame_order,
         region_frames_dir,
+        table_dir,
     )
     plot_locations_interactive(
         admin_df,
@@ -1294,9 +1302,10 @@ def main() -> None:
         frame_keyword_pairs,
         frame_order,
         frame_keywords_dir,
+        table_dir / "frame_keyword_figure_index.csv",
     )
 
-    print("Wrote:", output_dir / "province_sentiment_table.csv")
+    print("Wrote:", table_dir / "province_sentiment_table.csv")
     print("Wrote:", output_dir / "provinces_sentiment_balance.png")
     print("Wrote:", output_dir / "provinces_sentiment_distribution.png")
     print("Wrote:", output_dir / "categories_sentiment_distribution.png")

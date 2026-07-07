@@ -10,7 +10,7 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
-from country_scope import (
+from helpers.country_scope import (
     CountryScope,
     country_assignment_for_location,
     country_scope_from_args,
@@ -18,7 +18,7 @@ from country_scope import (
     country_candidates_json,
     country_name_for_id,
 )
-from shape_resources import (
+from helpers.shape_resources import (
     centroid_point,
     country_alias_lookup,
     country_shapes,
@@ -27,16 +27,16 @@ from shape_resources import (
     nuts2_shapes,
 )
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_locations_ollama.csv")
+    ap.add_argument("--input-csv", type=str, default="output/workflow/paragraph_locations_ollama.csv")
     ap.add_argument("--shapes-parquet", type=str, default="data/shapes.parquet")
-    ap.add_argument("--output-gpkg", type=str, default="output/text/paragraphs_with_geo.gpkg")
-    ap.add_argument("--output-csv", type=str, default="output/text/paragraphs_with_geo.csv")
+    ap.add_argument("--output-gpkg", type=str, default="output/workflow/paragraphs_with_geo.gpkg")
+    ap.add_argument("--output-csv", type=str, default="output/workflow/paragraphs_with_geo.csv")
     ap.add_argument("--country", type=str, default="Netherlands", help="Backward-compatible single-country shorthand.")
     ap.add_argument("--countries", nargs="+", default=None)
     ap.add_argument("--country-scope", type=str, default="")

@@ -18,11 +18,11 @@ from matplotlib.lines import Line2D
 import pandas as pd
 from shapely.geometry import LineString, Point, box
 
-from country_scope import COUNTRY_ORDER, countries_from_value, country_name_for_id, single_country_from_row
-from shape_resources import load_shapes_parquet, nuts2_shapes
-from visual_constants import SENTIMENT_COLORS, SENTIMENT_ORDER, country_color
+from helpers.country_scope import COUNTRY_ORDER, countries_from_value, country_name_for_id, single_country_from_row
+from helpers.shape_resources import load_shapes_parquet, nuts2_shapes
+from helpers.visual_constants import SENTIMENT_COLORS, SENTIMENT_ORDER, country_color
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 MIN_PROVINCE_SENTENCES = 30
 STACKED_FRAME_ORDER = [
@@ -108,6 +108,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--admin-csvs", nargs="+", required=True)
     ap.add_argument("--shapes-parquet", type=str, default="data/shapes.parquet")
     ap.add_argument("--output-dir", type=str, default="output/figures")
+    ap.add_argument("--table-dir", type=str, default="output/text")
     return ap.parse_args()
 
 
@@ -1542,35 +1543,37 @@ def main() -> None:
     os.chdir(project_dir)
 
     output_dir = Path(args.output_dir)
+    table_dir = Path(args.table_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    table_dir.mkdir(parents=True, exist_ok=True)
 
     admin_df = read_admin_tables(args.languages, args.countries, args.admin_csvs)
 
     province_tbl = build_province_sentiment_table(admin_df, args.languages)
-    province_tbl.to_csv(output_dir / "all_languages_province_sentiment_table.csv", index=False)
+    province_tbl.to_csv(table_dir / "all_languages_province_sentiment_table.csv", index=False)
     plot_province_balance(province_tbl, output_dir / "all_languages_province_sentiment_balance.png")
 
     frame_tbl = build_frame_sentiment_table(admin_df)
-    frame_tbl.to_csv(output_dir / "all_languages_frames_sentiment_table.csv", index=False)
+    frame_tbl.to_csv(table_dir / "all_languages_frames_sentiment_table.csv", index=False)
     plot_frame_sentiment_distribution(frame_tbl, output_dir / "all_languages_frames_sentiment_distribution.png")
 
     country_frame_tbl = build_country_frame_balance_table(admin_df, args.languages)
-    country_frame_tbl.to_csv(output_dir / "all_languages_frames_country_sentiment_balance_table.csv", index=False)
+    country_frame_tbl.to_csv(table_dir / "all_languages_frames_country_sentiment_balance_table.csv", index=False)
     plot_country_frame_balance(
         country_frame_tbl,
         output_dir / "all_languages_frames_country_sentiment_balance.png",
     )
 
     extreme_frame_share_tbl = build_country_extreme_province_frame_share_table(admin_df, province_tbl, args.languages)
-    extreme_frame_share_tbl.to_csv(output_dir / "all_languages_extreme_province_frame_shares_table.csv", index=False)
+    extreme_frame_share_tbl.to_csv(table_dir / "all_languages_extreme_province_frame_shares_table.csv", index=False)
     extreme_region_frame_balance_tbl = build_extreme_region_frame_balance_table(admin_df, extreme_frame_share_tbl, args.languages)
-    extreme_region_frame_balance_tbl.to_csv(output_dir / "all_languages_frames_extreme_region_sentiment_balance_table.csv", index=False)
+    extreme_region_frame_balance_tbl.to_csv(table_dir / "all_languages_frames_extreme_region_sentiment_balance_table.csv", index=False)
     plot_extreme_region_frame_balance(
         extreme_region_frame_balance_tbl,
         output_dir / "all_languages_frames_extreme_region_sentiment_balance.png",
     )
     stacked_frame_tbl = prepare_stacked_frame_data(extreme_frame_share_tbl)
-    stacked_frame_tbl.to_csv(output_dir / "frame_mentions_100pct_stacked_table.csv", index=False)
+    stacked_frame_tbl.to_csv(table_dir / "frame_mentions_100pct_stacked_table.csv", index=False)
     plot_frame_composition_100pct(
         stacked_frame_tbl,
         output_dir / "frame_mentions_100pct_stacked.png",
@@ -1589,16 +1592,16 @@ def main() -> None:
         extreme_frame_share_tbl,
     )
 
-    print("Wrote:", output_dir / "all_languages_province_sentiment_table.csv")
+    print("Wrote:", table_dir / "all_languages_province_sentiment_table.csv")
     print("Wrote:", output_dir / "all_languages_province_sentiment_balance.png")
-    print("Wrote:", output_dir / "all_languages_frames_sentiment_table.csv")
+    print("Wrote:", table_dir / "all_languages_frames_sentiment_table.csv")
     print("Wrote:", output_dir / "all_languages_frames_sentiment_distribution.png")
-    print("Wrote:", output_dir / "all_languages_frames_country_sentiment_balance_table.csv")
+    print("Wrote:", table_dir / "all_languages_frames_country_sentiment_balance_table.csv")
     print("Wrote:", output_dir / "all_languages_frames_country_sentiment_balance.png")
-    print("Wrote:", output_dir / "all_languages_extreme_province_frame_shares_table.csv")
-    print("Wrote:", output_dir / "all_languages_frames_extreme_region_sentiment_balance_table.csv")
+    print("Wrote:", table_dir / "all_languages_extreme_province_frame_shares_table.csv")
+    print("Wrote:", table_dir / "all_languages_frames_extreme_region_sentiment_balance_table.csv")
     print("Wrote:", output_dir / "all_languages_frames_extreme_region_sentiment_balance.png")
-    print("Wrote:", output_dir / "frame_mentions_100pct_stacked_table.csv")
+    print("Wrote:", table_dir / "frame_mentions_100pct_stacked_table.csv")
     print("Wrote:", output_dir / "frame_mentions_100pct_stacked.png")
     print("Wrote:", output_dir / "frame_mentions_100pct_stacked.pdf")
     print("Wrote:", output_dir / "all_languages_province_sentiment_map.png")

@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pandas as pd
 from shapely import wkt
-from language_resources import load_keyword_csv
+from helpers.language_resources import load_keyword_csv
 
 try:
     import geopandas as gpd
 except ImportError:
     gpd = None
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 
 def parse_args():
@@ -22,11 +22,11 @@ def parse_args():
     ap.add_argument("--input-gpkg", type=str, default="")
     ap.add_argument("--input-point-layer", type=str, default="sentences_points")
     ap.add_argument("--input-polygon-layer", type=str, default="sentences_polygons")
-    ap.add_argument("--keywords-csv", type=str, default="vocab/keywords_topics.csv")
+    ap.add_argument("--keywords-csv", type=str, default="data/vocab/keywords_topics.csv")
     ap.add_argument("--output-gpkg", type=str, default="")
     ap.add_argument("--output-layer", type=str, default="sentences_with_categories")
-    ap.add_argument("--output-long-csv", type=str, default="output/text/sentences_with_categories_long.csv")
-    ap.add_argument("--output-short-csv", type=str, default="output/text/sentences_with_categories_short.csv")
+    ap.add_argument("--output-long-csv", type=str, default="output/workflow/sentences_with_categories_long.csv")
+    ap.add_argument("--output-short-csv", type=str, default="output/workflow/sentences_with_categories_short.csv")
     ap.add_argument("--keep-only-matched", type=str, default="False")
     return ap.parse_args()
 

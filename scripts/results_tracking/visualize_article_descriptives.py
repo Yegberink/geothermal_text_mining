@@ -9,15 +9,16 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 DESCRIPTIVE_BLUE = "#3f6f8f"
 
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--articles-csv", type=str, default="output/text/articles_cleaned.csv")
+    ap.add_argument("--articles-csv", type=str, default="output/workflow/articles_cleaned.csv")
     ap.add_argument("--output-dir", type=str, default="output/figures")
+    ap.add_argument("--table-dir", type=str, default="output/text")
     ap.add_argument("--top-n-newspapers", type=int, default=6)
     return ap.parse_args()
 
@@ -175,24 +176,26 @@ def main() -> None:
 
     articles_csv = Path(args.articles_csv).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
+    table_dir = Path(args.table_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    table_dir.mkdir(parents=True, exist_ok=True)
 
     articles_df = add_publish_year(load_articles(articles_csv))
     year_counts = build_articles_per_year(articles_df)
     newspaper_counts = build_top_newspapers(articles_df, args.top_n_newspapers)
 
-    year_counts.to_csv(output_dir / "articles_per_year.csv", index=False)
-    newspaper_counts.to_csv(output_dir / "top_newspapers.csv", index=False)
-    write_summary(articles_df, output_dir / "article_descriptives_summary.csv")
+    year_counts.to_csv(table_dir / "articles_per_year.csv", index=False)
+    newspaper_counts.to_csv(table_dir / "top_newspapers.csv", index=False)
+    write_summary(articles_df, table_dir / "article_descriptives_summary.csv")
 
     plot_articles_per_year(year_counts, output_dir / "articles_per_year.png")
     plot_top_newspapers(newspaper_counts, output_dir / "top_newspapers.png")
 
-    print("Wrote:", output_dir / "articles_per_year.csv")
+    print("Wrote:", table_dir / "articles_per_year.csv")
     print("Wrote:", output_dir / "articles_per_year.png")
-    print("Wrote:", output_dir / "top_newspapers.csv")
+    print("Wrote:", table_dir / "top_newspapers.csv")
     print("Wrote:", output_dir / "top_newspapers.png")
-    print("Wrote:", output_dir / "article_descriptives_summary.csv")
+    print("Wrote:", table_dir / "article_descriptives_summary.csv")
 
 
 if __name__ == "__main__":

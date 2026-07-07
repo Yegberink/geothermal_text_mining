@@ -9,19 +9,20 @@ from pathlib import Path
 
 import pandas as pd
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/sentences_with_categories_admin.csv")
+    ap.add_argument("--input-csv", type=str, default="output/workflow/sentences_with_categories_admin.csv")
     ap.add_argument("--paragraph-input-csv", type=str, default="")
     ap.add_argument("--paragraph-geothermal-csv", type=str, default="")
     ap.add_argument("--paragraph-location-csv", type=str, default="")
     ap.add_argument("--sentiment-csv", type=str, default="")
     ap.add_argument("--keywords-csv", type=str, default="")
     ap.add_argument("--output-csv", type=str, default="annotation/sentences_for_annotation.csv")
+    ap.add_argument("--combine-inputs", nargs="+", default=[])
     ap.add_argument("--province-filter-regex", type=str, default="")
     ap.add_argument("--exclude-neutral", type=str, default="True")
     ap.add_argument("--sentence-sample-size", type=int, default=500)
@@ -29,6 +30,30 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--paragraph-location-sample-size", type=int, default=None)
     ap.add_argument("--random-state", type=int, default=42)
     return ap.parse_args()
+
+
+def language_from_path(path: Path) -> str:
+    parts = path.parts
+    if "annotation" in parts:
+        idx = parts.index("annotation")
+        if idx + 1 < len(parts):
+            return parts[idx + 1]
+    return ""
+
+
+def combine_annotation_inputs(input_paths: list[str], output_csv: Path) -> None:
+    frames = []
+    for input_path_str in input_paths:
+        input_path = Path(input_path_str)
+        df = pd.read_csv(input_path)
+        if "language" not in df.columns:
+            df.insert(0, "language", language_from_path(input_path))
+        frames.append(df)
+
+    out = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(output_csv, index=False)
+    print(f"Wrote: {output_csv} (rows={len(out)})")
 
 
 def parse_bool(value: str) -> bool:
@@ -49,7 +74,10 @@ def normalize_sentiment(series: pd.Series) -> pd.Series:
 
 
 def parse_keyword_csv(path: Path) -> dict[str, list[str]]:
-    keyword_df = pd.read_csv(path)
+    try:
+        keyword_df = pd.read_csv(path, sep=";", encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        keyword_df = pd.read_csv(path, sep=";", encoding="cp1252")
     keyword_df = keyword_df.loc[:, ~keyword_df.columns.astype(str).str.match(r"^Unnamed")]
     categories = {}
     for col in keyword_df.columns:
@@ -237,13 +265,17 @@ def main() -> None:
     project_dir = Path(args.project_dir).expanduser().resolve()
     os.chdir(project_dir)
 
+    output_csv = Path(args.output_csv)
+    if args.combine_inputs:
+        combine_annotation_inputs(args.combine_inputs, output_csv)
+        return
+
     input_csv = Path(args.input_csv)
     paragraph_input_csv = Path(args.paragraph_input_csv) if args.paragraph_input_csv else None
     paragraph_geothermal_csv = Path(args.paragraph_geothermal_csv) if args.paragraph_geothermal_csv else paragraph_input_csv
     paragraph_location_csv = Path(args.paragraph_location_csv) if args.paragraph_location_csv else None
     sentiment_csv = Path(args.sentiment_csv) if args.sentiment_csv else None
     keywords_csv = Path(args.keywords_csv) if args.keywords_csv else None
-    output_csv = Path(args.output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     paragraph_location_sample_size = (
         args.paragraph_location_sample_size

@@ -11,12 +11,12 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 import pandas as pd
 from tqdm.auto import tqdm
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_OLLAMA_URL = "http://localhost:11434/api/generate"
 DEFAULT_MODEL = "llama3.1:8b"
 DEFAULT_LANGUAGE = "dutch"
@@ -32,11 +32,9 @@ OLLAMA_SYSTEM_PROMPT = (
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/sentence_locations_ollama.csv")
-    ap.add_argument("--output-csv", type=str, default="output/text/sentence_sentiment_llm.csv")
-    ap.add_argument("--checkpoint", type=str, default="cache/sentence_sentiment_checkpoint.parquet")
-    ap.add_argument("--cache", type=str, default="cache/sentence_sentiment_cache.jsonl")
-    ap.add_argument("--partial-csv", type=str, default="cache/sentence_sentiment_partial_results.csv")
+    ap.add_argument("--input-csv", type=str, default="output/workflow/sentence_locations_ollama.csv")
+    ap.add_argument("--output-csv", type=str, default="output/workflow/sentence_sentiment_llm.csv")
+    ap.add_argument("--cache", type=str, default="cache/sentiment_classification.jsonl")
     ap.add_argument("--model", type=str, default=DEFAULT_MODEL)
     ap.add_argument("--ollama-url", type=str, default=DEFAULT_OLLAMA_URL)
     ap.add_argument("--text-col", type=str, default="sentence_text")
@@ -69,7 +67,7 @@ def make_uid(row: Dict[str, object]) -> str:
 
 
 def set_unique_row_index(df: pd.DataFrame, uid_col: str = "sentence_uid") -> pd.DataFrame:
-    """Keep the semantic uid as data, but use a unique key for checkpoint alignment."""
+    """Keep the semantic uid as data, but use a unique key for row alignment."""
     out = df.copy()
     if uid_col not in out.columns:
         if out.index.name == uid_col:
@@ -99,22 +97,6 @@ def _fingerprint(text: str, model_name: str, prompt_variant: str, language: str)
     h.update(b"\n")
     h.update((text or "").strip().encode("utf-8"))
     return h.hexdigest()
-
-
-def save_checkpoint(out: pd.DataFrame, checkpoint_path: Path, partial_csv_path: Optional[Path]) -> None:
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = checkpoint_path.with_suffix(checkpoint_path.suffix + ".tmp")
-    to_store = out.copy()
-    if to_store.index.name and to_store.index.name in to_store.columns:
-        to_store = to_store.reset_index(drop=True)
-    to_store.to_parquet(tmp_path, index=True)
-    tmp_path.replace(checkpoint_path)
-    if partial_csv_path is not None:
-        partial_csv_path.parent.mkdir(parents=True, exist_ok=True)
-        partial_out = out.copy()
-        if partial_out.index.name and partial_out.index.name in partial_out.columns:
-            partial_out = partial_out.reset_index(drop=True)
-        partial_out.to_csv(partial_csv_path, index=False, encoding="utf-8")
 
 
 def _install_interrupt_handlers() -> None:
@@ -296,37 +278,21 @@ def call_ollama_sentiment(
 def batch_sentiment_resumable(
     df: pd.DataFrame,
     text_col: str,
-    checkpoint_path: Path,
     cache_path: Path,
-    partial_csv_path: Optional[Path],
     model_name: str,
     ollama_url: str,
     language: str,
     prompt_variant: str,
     timeout: int,
     sleep_s: float,
-    save_every: int,
 ) -> pd.DataFrame:
-    if checkpoint_path.exists():
-        out = pd.read_parquet(checkpoint_path)
-        out = set_unique_row_index(out)
-        out = out.reindex(df.index)
-        for c in df.columns:
-            # Always refresh source columns from the current input so reruns with
-            # an updated frame framework keep the latest sentence metadata while
-            # preserving previously computed sentiment outputs by sentence_uid.
-            out[c] = df[c]
-        restarted = restart_error_rows(out)
-        if restarted:
-            print(f"[resume] Restarting {restarted} sentiment rows that previously errored.")
-    else:
-        out = df.copy()
-        out["sentiment"] = None
-        out["sentiment_norm"] = None
-        out["sentiment_confidence"] = 0.0
-        out["sentiment_evidence_short"] = None
-        out["sentiment_status"] = None
-        out["sentiment_error"] = None
+    out = df.copy()
+    out["sentiment"] = None
+    out["sentiment_norm"] = None
+    out["sentiment_confidence"] = 0.0
+    out["sentiment_evidence_short"] = None
+    out["sentiment_status"] = None
+    out["sentiment_error"] = None
 
     cache: Dict[str, dict] = {}
     if cache_path.exists():
@@ -357,7 +323,6 @@ def batch_sentiment_resumable(
 
     todo_idx = [i for i, row in out.iterrows() if not is_done(row)]
     pbar = tqdm(total=len(todo_idx), desc=f"Sentence sentiment ({model_name})", unit="row")
-    processed_since_save = 0
 
     try:
         for i in todo_idx:
@@ -370,7 +335,6 @@ def batch_sentiment_resumable(
                 out.at[i, "sentiment_status"] = "empty"
                 out.at[i, "sentiment_error"] = None
                 pbar.update(1)
-                processed_since_save += 1
                 continue
 
             key = _fingerprint(text, model_name=model_name, prompt_variant=prompt_variant, language=language)
@@ -397,19 +361,14 @@ def batch_sentiment_resumable(
                 out.at[i, "sentiment_error"] = repr(exc)
 
             pbar.update(1)
-            processed_since_save += 1
             if sleep_s:
                 time.sleep(sleep_s)
-            if processed_since_save >= save_every:
-                save_checkpoint(out, checkpoint_path, partial_csv_path)
-                processed_since_save = 0
     except KeyboardInterrupt:
-        save_checkpoint(out, checkpoint_path, partial_csv_path)
+        print(f"\nStopped by user. Progress saved to:\n- {cache_path}")
         raise
     finally:
         pbar.close()
 
-    save_checkpoint(out, checkpoint_path, partial_csv_path)
     return out
 
 
@@ -459,9 +418,7 @@ def main() -> None:
 
     input_csv = Path(args.input_csv)
     output_csv = Path(args.output_csv)
-    checkpoint_path = Path(args.checkpoint)
     cache_path = Path(args.cache)
-    partial_csv_path = Path(args.partial_csv) if args.partial_csv else None
 
     df = pd.read_csv(input_csv)
     if args.text_col not in df.columns:
@@ -475,16 +432,13 @@ def main() -> None:
     out = batch_sentiment_resumable(
         df=df,
         text_col=args.text_col,
-        checkpoint_path=checkpoint_path,
         cache_path=cache_path,
-        partial_csv_path=partial_csv_path,
         model_name=args.model,
         ollama_url=args.ollama_url,
         language=args.language,
         prompt_variant=args.prompt_variant,
         timeout=args.timeout,
         sleep_s=args.sleep_s,
-        save_every=args.save_every,
     )
 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -495,9 +449,8 @@ def main() -> None:
     if remaining:
         raise RuntimeError(
             f"Sentence sentiment classification is incomplete ({remaining} rows unfinished). "
-            f"Progress is saved in {checkpoint_path}"
-            + (f" and {partial_csv_path}" if partial_csv_path is not None else "")
-            + "; not writing the final Snakemake output CSV."
+            f"Completed model calls are saved in {cache_path}; "
+            "not writing the final Snakemake output CSV."
         )
     to_write.to_csv(output_csv, index=False, encoding="utf-8")
     print(f"Wrote sentiment output: {output_csv}")

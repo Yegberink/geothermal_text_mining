@@ -10,8 +10,8 @@ from typing import Iterable
 
 import pandas as pd
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT_CSV = "output/text/data_tracking.csv"
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_OUTPUT_CSV = "output/generic/text/data_tracking.csv"
 
 TEXT_STAGE_FILES = {
     "articles": "articles_cleaned.csv",
@@ -157,12 +157,16 @@ def language_text_path(output_root: Path, language: str, filename: str) -> Path:
     return output_root / language / "text" / filename
 
 
+def language_workflow_path(output_root: Path, language: str, filename: str) -> Path:
+    return output_root / language / "workflow" / filename
+
+
 def raw_article_paths(cache_root: Path, language: str) -> list[Path]:
     return sorted((cache_root / language / "preprocess_rtf_chunks" / "raw_articles").glob("*.csv"))
 
 
-def unmatched_path(cache_root: Path, language: str) -> Path:
-    return cache_root / language / "geocoding_unmatched.csv"
+def unmatched_path(output_root: Path, language: str) -> Path:
+    return language_text_path(output_root, language, "geocoding_unmatched.csv")
 
 
 class TrackingTable:
@@ -254,7 +258,7 @@ def add_rows_for_language(
     }
     for key, filename in TEXT_STAGE_FILES.items():
         frames[key] = read_csv_selected(
-            language_text_path(output_root, language, filename),
+            language_workflow_path(output_root, language, filename),
             stage_columns.get(key, []),
         )
 
@@ -558,7 +562,7 @@ def add_rows_for_language(
                 *count_subset(final_geo, cache_mask),
             )
 
-    unmatched = read_csv_selected(unmatched_path(cache_root, language), ["row_count"])
+    unmatched = read_csv_selected(unmatched_path(output_root, language), ["row_count"])
     table.set(
         "geocoding_unmatched_unique_locations",
         42,

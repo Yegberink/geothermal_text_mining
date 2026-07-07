@@ -1,0 +1,36 @@
+strong:
+  - aardwarmte
+  - geothermie
+  - geothermische energie
+  - geothermische warmte
+  - geothermische installatie
+  - geothermische centrale
+  - geothermische put
+  - geothermische warmtepomp
+  - bodemwarmtewisselaar
+  - geothermisch warmtenet
+
+contextual:
+  - warmtebron
+  - doublet
+  - boring
+  - productieput
+  - injectieput
+  - herinjectie
+  - vloeistof
+  - reservoir
+  - ondergrond
+  - watervoerende laag
+  - warmtepomp
+
+competing:
+  - aardolie
+  - olie
+  - aardgas
+  - koolwaterstoffen
+  - olieput
+  - CO2-opslag
+  - thermaal water
+  - thermen
+  - zonne-energie
+  - windenergie

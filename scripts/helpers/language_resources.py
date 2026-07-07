@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from country_scope import COUNTRY_ALIASES, standardize_country_name
+from helpers.country_scope import COUNTRY_ALIASES, standardize_country_name
 
 
 KEYWORD_CSV_SEPARATOR = ";"
@@ -131,7 +131,7 @@ def normalize_language(language: str | None) -> str:
 
 
 def vocab_dir(project_dir: Path, language: str | None) -> Path:
-    return project_dir / "vocab" / normalize_language(language)
+    return project_dir / "data" / "vocab" / normalize_language(language)
 
 
 def read_yaml(path: Path) -> dict[str, Any]:

@@ -29,22 +29,22 @@ import warnings
 import pandas as pd
 import yaml
 
-from country_scope import country_scope_from_config
+from helpers.country_scope import country_scope_from_config
 from striprtf.striprtf import rtf_to_text as _striprtf_to_text
 from tqdm.auto import tqdm
 
-from language_resources import load_date_locale, load_geothermal_patterns, normalize_language
+from helpers.language_resources import load_date_locale, load_geothermal_patterns, normalize_language
 
 
 # =============================
 # CONFIG (edit these)
 # =============================
 
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-INPUT_RTF_DIR = PROJECT_DIR / "input_data"
+PROJECT_DIR = Path(__file__).resolve().parents[2]
+INPUT_RTF_DIR = PROJECT_DIR / "data" / "text_data"
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "config.yaml"
 
-OUTPUT_DIR = PROJECT_DIR / "output" / "text"
+OUTPUT_DIR = PROJECT_DIR / "output" / "workflow"
 OUTPUT_PARAGRAPH_CSV = OUTPUT_DIR / "newspapers_cleaned_paragraphs.csv"
 OUTPUT_ARTICLES_CSV = OUTPUT_DIR / "articles_cleaned.csv"
 OUTPUT_RAW_ARTICLES_CSV = OUTPUT_DIR / "raw_articles.csv"

@@ -1,0 +1,34 @@
+strong:
+  - geotermia
+  - energia geotermica
+  - calore geotermico
+  - impianto geotermico
+  - centrale geotermoelettrica
+  - pozzo geotermico
+  - pompa di calore geotermica
+  - sonda geotermica
+  - teleriscaldamento geotermico
+
+contextual:
+  - fonte di calore
+  - doppietto
+  - pozzo di produzione
+  - pozzo di reiniezione
+  - perforazione
+  - reiniezione
+  - fluido
+  - serbatoio
+  - sottosuolo
+  - falda
+  - pompa di calore
+
+competing:
+  - petrolio
+  - gas naturale
+  - idrocarburi
+  - pozzo petrolifero
+  - stoccaggio di CO2
+  - acque termali
+  - terme
+  - energia solare
+  - energia eolica

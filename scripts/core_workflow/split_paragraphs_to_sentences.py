@@ -15,7 +15,7 @@ try:
 except ImportError:
     spacy = None
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 LANGUAGE_TO_SPACY = {
     "dutch": "nl",
@@ -32,8 +32,8 @@ LANGUAGE_TO_SPACY = {
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_locations_ollama.csv")
-    ap.add_argument("--output-csv", type=str, default="output/text/sentence_locations_ollama.csv")
+    ap.add_argument("--input-csv", type=str, default="output/workflow/paragraph_locations_ollama.csv")
+    ap.add_argument("--output-csv", type=str, default="output/workflow/sentence_locations_ollama.csv")
     ap.add_argument("--text-col", type=str, default="paragraph_text")
     ap.add_argument("--uid-col", type=str, default="uid")
     ap.add_argument("--language", type=str, default="nl")

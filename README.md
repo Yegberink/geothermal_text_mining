@@ -8,34 +8,32 @@ The workflow is paragraph-based for keyword prefiltering, geothermal relevance, 
 
 The current `Snakefile` runs the following pipeline:
 
-1. `scripts/preprocess_rtf_to_paragraphs.py`
+1. `scripts/core_workflow/preprocess_rtf_to_paragraphs.py`
    Converts raw `.rtf` newspaper files into cleaned article and paragraph tables.
-2. `scripts/update_keywords_framework.py`
-   Builds the effective keyword framework from the base vocabulary and accepted review additions.
-3. `scripts/filter_paragraphs_by_keywords.py`
-   Keeps only paragraphs that mention at least one keyword from the effective framework.
-4. `scripts/is_geothermal.py`
+2. `scripts/core_workflow/filter_paragraphs_by_keywords.py`
+   Keeps only paragraphs that mention at least one keyword from the language vocabulary.
+3. `scripts/core_workflow/is_geothermal.py`
    Uses Ollama to classify whether each paragraph is mainly about geothermal energy.
-5. `scripts/locations_ollama.py`
+4. `scripts/core_workflow/locations_ollama.py`
    Uses Ollama to extract the primary location discussed in each geothermal paragraph.
-6. `scripts/geocoding_offline.py`
+5. `scripts/core_workflow/geocoding_offline.py`
    Matches the extracted paragraph location against `data/shapes.parquet` NUTS2/country shapes.
-7. `scripts/geocoding_online.py`
+6. `scripts/core_workflow/geocoding_online.py`
    Finalises paragraph geocoding offline: language-specific manual overrides, GeoNames country gazetteers, and any previously filled geocoder cache are applied to remaining unmatched locations. The step also writes unmatched-location and suggestion reports for review.
-8. `scripts/split_paragraphs_to_sentences.py`
+7. `scripts/core_workflow/split_paragraphs_to_sentences.py`
    Splits geocoded paragraphs into sentence-level rows while keeping paragraph context and paragraph-level location/geometry output.
-9. `scripts/classification_sentences.py`
+8. `scripts/core_workflow/classification_sentences.py`
    Runs keyword-based frame matching on the sentence table and keeps only sentences with at least one matched frame.
-10. `scripts/sentiment_classification.py`
+9. `scripts/core_workflow/sentiment_classification.py`
    Runs a local Ollama sentiment classifier on the frame-bearing sentences.
    Duplicate `sentence_text` values are cached locally to avoid repeated model calls.
-11. `scripts/classification_sentences.py`
+10. `scripts/core_workflow/classification_sentences.py`
    Builds the geocoded sentence-level frame outputs from inherited paragraph geometry and exports long/short tables plus a GeoPackage.
-12. `scripts/geographic_aggregation.py`
+11. `scripts/core_workflow/geographic_aggregation.py`
     Assigns sentence-level geocoded outputs to NUTS2 regions from `data/shapes.parquet`.
-13. `scripts/visualize_absa_results.py`
+12. `scripts/results_tracking/visualize_absa_results.py`
     Produces the province-level and category-level sentiment figures plus an interactive HTML location map.
-14. `scripts/make_annotation_df.py`
+13. `scripts/core_workflow/make_annotation_df.py`
     Builds the sentence-level annotation CSV used by the Streamlit annotation app.
 
 In short, the current workflow is:
@@ -55,55 +53,56 @@ In short, the current workflow is:
 
 The workflow expects one folder per language:
 
-- raw newspaper `.rtf` files in `input_data/{language}/`
-- a frame/topic keyword file in `vocab/{language}/keywords_topics.csv`
+- raw newspaper `.rtf` files in `data/text_data/{language}/`
+- a frame/topic keyword file in `data/vocab/{language}/keywords_topics.csv`
 
-The shared administrative geography source is `data/shapes.parquet`, containing European country shapes and NUTS2 regions for the countries of interest. It is used for local matching, aggregation, and map visualisation. GeoNames country extracts live in `cache/geonames/` for offline point matching. Public online geocoders are not contacted by the default workflow.
+The shared administrative geography source is `data/shapes.parquet`, containing European country shapes and NUTS2 regions for the countries of interest. It is used for local matching, aggregation, and map visualisation. GeoNames country extracts live in `data/geonames/` for offline point matching. Public online geocoders are not contacted by the default workflow.
 
-With `languages: auto`, Snakemake discovers every `vocab/{language}/keywords_topics.csv` that also has `input_data/{language}/`.
+With `languages: auto`, Snakemake discovers every `data/vocab/{language}/keywords_topics.csv` that also has `data/text_data/{language}/`.
 
 ## Key outputs
 
 The main outputs are written under `output/{language}/` for every discovered workflow language.
-Cross-language overview figures are written under `output/figures/`.
+Workflow intermediates live in `output/{language}/workflow/`, result tables in `output/{language}/text/`, and figures/maps in `output/{language}/figures/`.
+Cross-language outputs live under `output/generic/text/` and `output/generic/figures/`.
 
 ### Main intermediate outputs
 
-- `output/dutch/text/newspapers_cleaned_paragraphs.csv`
-- `output/dutch/text/newspapers_keyword_filtered_paragraphs.csv`
-- `output/dutch/text/paragraph_geothermal_ollama.csv`
-- `output/dutch/text/paragraph_locations_ollama.csv`
-- `output/dutch/text/paragraphs_with_geo.csv`
-- `output/dutch/text/sentence_locations_ollama.csv`
-- `output/dutch/text/sentences_with_frames_long.csv`
-- `output/dutch/text/sentence_sentiment_llm.csv`
-- `output/dutch/text/sentences_with_categories.gpkg`
-- `output/dutch/text/sentences_with_categories_admin.csv`
+- `output/dutch/workflow/newspapers_cleaned_paragraphs.csv`
+- `output/dutch/workflow/newspapers_keyword_filtered_paragraphs.csv`
+- `output/dutch/workflow/paragraph_geothermal_ollama.csv`
+- `output/dutch/workflow/paragraph_locations_ollama.csv`
+- `output/dutch/workflow/paragraphs_with_geo.csv`
+- `output/dutch/workflow/sentence_locations_ollama.csv`
+- `output/dutch/workflow/sentences_with_frames_long.csv`
+- `output/dutch/workflow/sentence_sentiment_llm.csv`
+- `output/dutch/workflow/sentences_with_categories.gpkg`
+- `output/dutch/workflow/sentences_with_categories_admin.csv`
 
 ### Default final targets
 
 Running `snakemake` with no explicit target builds these outputs for every discovered language:
 
-- `output/{language}/text/sentences_with_categories_admin.csv`
-- `output/{language}/text/sentences_with_categories_admin.gpkg`
-- `output/{language}/figures/province_sentiment_table.csv`
+- `output/{language}/workflow/sentences_with_categories_admin.csv`
+- `output/{language}/workflow/sentences_with_categories_admin.gpkg`
+- `output/{language}/text/province_sentiment_table.csv`
 - `output/{language}/figures/provinces_sentiment_balance.png`
 - `output/{language}/figures/provinces_sentiment_distribution.png`
 - `output/{language}/figures/categories_sentiment_distribution.png`
 - `output/{language}/figures/locations_map.html`
-- `output/figures/all_languages_province_sentiment_table.csv`
-- `output/figures/all_languages_province_sentiment_balance.png`
-- `output/figures/all_languages_frames_sentiment_table.csv`
-- `output/figures/all_languages_frames_sentiment_distribution.png`
-- `output/figures/all_languages_frames_country_sentiment_balance_table.csv`
-- `output/figures/all_languages_frames_country_sentiment_balance.png`
-- `output/figures/all_languages_extreme_province_frame_shares_table.csv`
-- `output/figures/all_languages_frames_extreme_region_sentiment_balance_table.csv`
-- `output/figures/all_languages_frames_extreme_region_sentiment_balance.png`
-- `output/figures/frame_mentions_100pct_stacked_table.csv`
-- `output/figures/frame_mentions_100pct_stacked.png`
-- `output/figures/frame_mentions_100pct_stacked.pdf`
-- `output/figures/all_languages_province_sentiment_map.png`
+- `output/generic/text/all_languages_province_sentiment_table.csv`
+- `output/generic/figures/all_languages_province_sentiment_balance.png`
+- `output/generic/text/all_languages_frames_sentiment_table.csv`
+- `output/generic/figures/all_languages_frames_sentiment_distribution.png`
+- `output/generic/text/all_languages_frames_country_sentiment_balance_table.csv`
+- `output/generic/figures/all_languages_frames_country_sentiment_balance.png`
+- `output/generic/text/all_languages_extreme_province_frame_shares_table.csv`
+- `output/generic/text/all_languages_frames_extreme_region_sentiment_balance_table.csv`
+- `output/generic/figures/all_languages_frames_extreme_region_sentiment_balance.png`
+- `output/generic/text/frame_mentions_100pct_stacked_table.csv`
+- `output/generic/figures/frame_mentions_100pct_stacked.png`
+- `output/generic/figures/frame_mentions_100pct_stacked.pdf`
+- `output/generic/figures/all_languages_province_sentiment_map.png`
 
 If `make_annotation_df: true`, it also builds:
 
@@ -172,7 +171,7 @@ Default geocoding first resolves locations deterministically with overrides and 
 Add manual geocoding decisions to:
 
 ```text
-vocab/{language}/location_geocoding_overrides.csv
+data/vocab/{language}/location_geocoding_overrides.csv
 ```
 
 The override schema is:
@@ -183,10 +182,10 @@ location,action,target_type,target_name,country_id,nuts2_id,lat,lon,notes
 
 Supported actions are `nuts2`, `point`, and `ignore`. After each default run, review:
 
-- `cache/{language}/geocoding_unmatched.csv`
-- `cache/{language}/geocoding_suggestions.csv`
+- `output/{language}/text/geocoding_unmatched.csv`
+- `output/{language}/text/geocoding_suggestions.csv`
 
-The shared online cache is written to `cache/geocoder_cache.jsonl`. Per-language final geocoding also reads any older `cache/{language}/geocoder_cache.jsonl` files if they exist. For public Nominatim, set `online_geocoding.nominatim_policy_ack: true` after reviewing the OSMF usage policy: https://operations.osmfoundation.org/policies/nominatim/. Photon is an OSM-based public demo that may throttle or change without notice, Pelias is a self-hostable open-data geocoder, and OpenCage requires an API key.
+The shared online cache is written to `cache/geocode_unmatched_online.jsonl`. For public Nominatim, set `online_geocoding.nominatim_policy_ack: true` after reviewing the OSMF usage policy: https://operations.osmfoundation.org/policies/nominatim/. Photon is an OSM-based public demo that may throttle or change without notice, Pelias is a self-hostable open-data geocoder, and OpenCage requires an API key.
 
 ## Installation
 
@@ -210,12 +209,12 @@ Run the default workflow:
 pixi run snakemake --cores 4
 ```
 
-This runs all languages discovered from `vocab/` and creates the combined annotation CSV at the end.
+This runs all languages discovered from `data/vocab/` and creates the combined annotation CSV at the end.
 
 Build a specific target:
 
 ```bash
-pixi run snakemake --cores 4 output/dutch/text/sentences_with_categories_admin.csv
+pixi run snakemake --cores 4 output/dutch/workflow/sentences_with_categories_admin.csv
 ```
 
 Build the annotation export only:
@@ -244,7 +243,7 @@ The current annotation flow supports four selectable evaluations:
 - sentence sentiment correctness
 - configurable workflow questions
 
-The app lets you select the language and evaluation, shows each sampled sentence or paragraph with the relevant model output, and asks the review question for that evaluation. It reports accuracy for the selected queue from the saved annotations. Frame-identification corrections are also exported to the same keyword-review CSV used by `scripts/update_keywords_framework.py`, so the framework can be improved from the evaluation workflow.
+The app lets you select the language and evaluation, shows each sampled sentence or paragraph with the relevant model output, and asks the review question for that evaluation. It reports accuracy for the selected queue from the saved annotations. Annotation results do not feed back into the workflow vocabulary.
 
 The app uses `annotation/{language}/sentences_for_annotation.csv` when available, and can also read language rows from `annotation/sentences_for_annotation_all_languages.csv`.
 
@@ -268,44 +267,10 @@ annotation:
         - Sentiment classification
 ```
 
-## Sentiment model assessment
-
-A separate sentiment study workflow is available under `annotation/sentiment_model_assessment/`.
-
-It samples Dutch sentence-level records from the existing workflow, runs a local Ollama sentiment comparison set, assigns the sampled sentences across `Dekker` and `Egberink` with overlap, and evaluates model performance afterward in a notebook.
-
-Generate the comparison set:
-
-```bash
-python scripts/assess_sentiment_models.py
-```
-
-Use specific local Ollama models for the comparison run:
-
-```bash
-ollama pull qwen2.5:14b
-ollama pull llama3.1:8b
-ollama pull mistral
-ollama pull phi3
-python scripts/assess_sentiment_models.py --ollama-models qwen2.5:14b,llama3.1:8b,mistral,phi3
-```
-
-Run the sentiment-only review app:
-
-```bash
-streamlit run annotation/sentiment_model_assessment/app.py
-```
-
-Analyze model performance afterward in:
-
-```bash
-annotation/sentiment_model_assessment/analysis.ipynb
-```
-
 ## Configuration notes
 
-- `language` in `config/config.yaml` rewrites `input_data/`, `output/`, `cache/`, `data/`, `vocab/`, and `annotation/` paths into language-specific subfolders.
-- Runtime cache and checkpoint files are written under `cache/{language}/`.
+- `language` in `config/config.yaml` rewrites `data/text_data/`, `data/vocab/`, `output/`, `cache/`, and `annotation/` paths into language-specific subfolders where appropriate.
+- Runtime LLM caches are written under `cache/{language}/`, one JSONL file per script step.
 - The geothermal relevance, location extraction, and sentence sentiment steps require a local Ollama server and the configured models.
 - If you want to change file names or locations, update `config/config.yaml` instead of editing the `Snakefile`.
 

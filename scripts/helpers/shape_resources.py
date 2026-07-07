@@ -9,7 +9,7 @@ import pandas as pd
 from shapely import wkb
 from shapely.geometry import Point
 
-from country_scope import (
+from helpers.country_scope import (
     COUNTRY_ALIASES,
     COUNTRY_NAMES_BY_ID,
     countries_from_value,

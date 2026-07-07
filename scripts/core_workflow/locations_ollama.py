@@ -19,20 +19,20 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from tqdm.auto import tqdm
 
-from country_scope import (
+from helpers.country_scope import (
     CountryScope,
     country_assignment_for_location,
     country_candidates_json,
     country_scope_from_args,
 )
-from shape_resources import normalize_key
+from helpers.shape_resources import normalize_key
 
 SYSTEM = (
     "You are an assistant that extracts the single primary geographic location "
     "a newspaper paragraph is mainly about."
 )
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 ROW_UID_COL = "_row_uid"
 NO_LOCATION_VALUES = {"", "none", "nan", "null"}
 LOCATION_TRACKING_DEFAULTS = {
@@ -603,22 +603,6 @@ def apply_document_location_fallback(
     return out
 
 
-def save_checkpoint(out: pd.DataFrame, checkpoint_path: Path) -> None:
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = checkpoint_path.with_suffix(checkpoint_path.suffix + ".tmp")
-    out.to_parquet(tmp_path, index=True)
-    tmp_path.replace(checkpoint_path)
-
-
-def write_partial_csv(out: pd.DataFrame, partial_csv_path: Optional[Path]) -> None:
-    if partial_csv_path is None:
-        return
-    partial_csv_path.parent.mkdir(parents=True, exist_ok=True)
-    partial_out = out.copy()
-    partial_out[ROW_UID_COL] = partial_out.index
-    partial_out.to_csv(partial_csv_path, index=False, encoding="utf-8")
-
-
 def incomplete_count(out: pd.DataFrame) -> int:
     if "llm_status" not in out.columns:
         return len(out)
@@ -664,37 +648,20 @@ def batch_primary_locations_resumable(
     df: pd.DataFrame,
     text_col: str,
     region_col: str,
-    checkpoint_path: Path,
     cache_path: Path,
-    save_every: int,
     sleep_s: float,
     ollama_url: str,
     model: str,
     country_scope: CountryScope,
-    partial_csv_path: Optional[Path],
 ) -> pd.DataFrame:
-    if checkpoint_path.exists():
-        out = pd.read_parquet(checkpoint_path)
-
-        # Defensive handling for older or differently written checkpoints.
-        out = set_unique_row_index(out)
-
-        out = out.reindex(df.index)
-
-        for c in df.columns:
-            out[c] = df[c]
-        restarted = restart_error_rows(out)
-        if restarted:
-            print(f"[resume] Restarting {restarted} location extraction rows that previously errored.")
-    else:
-        out = df.copy()
-        out["llm_location"] = None
-        out["llm_granularity"] = None
-        out["llm_confidence"] = 0.0
-        out["llm_reasoning_short"] = None
-        out["llm_status"] = None
-        out["llm_error"] = None
-        out = ensure_location_tracking_columns(out)
+    out = df.copy()
+    out["llm_location"] = None
+    out["llm_granularity"] = None
+    out["llm_confidence"] = 0.0
+    out["llm_reasoning_short"] = None
+    out["llm_status"] = None
+    out["llm_error"] = None
+    out = ensure_location_tracking_columns(out)
 
     out = ensure_location_tracking_columns(out)
     out["llm_multi_country_scope"] = country_scope.is_multi_country
@@ -762,7 +729,6 @@ def batch_primary_locations_resumable(
 
     ok = int((out.get("llm_status") == "ok").sum()) if "llm_status" in out.columns else 0
     err = int((out.get("llm_status") == "error").sum()) if "llm_status" in out.columns else 0
-    processed_since_save = 0
 
     try:
         for i in pbar:
@@ -783,7 +749,6 @@ def batch_primary_locations_resumable(
                 out.at[i, "llm_multi_country_scope"] = country_scope.is_multi_country
                 out.at[i, "llm_paragraph_location_raw"] = "NONE"
                 out.at[i, "llm_paragraph_returned_none"] = None
-                processed_since_save += 1
                 continue
 
             key = _fingerprint(text, region_name, country_scope.cache_key)
@@ -823,23 +788,15 @@ def batch_primary_locations_resumable(
                 out.at[i, "llm_error"] = repr(e)
                 err += 1
 
-            processed_since_save += 1
             pbar.set_postfix({"ok": ok, "error": err, "cached": cached is not None})
 
             if sleep_s:
                 time.sleep(sleep_s)
 
-            if processed_since_save >= save_every:
-                save_checkpoint(out, checkpoint_path)
-                processed_since_save = 0
-
     except KeyboardInterrupt:
-        save_checkpoint(out, checkpoint_path)
-        write_partial_csv(out, partial_csv_path)
         print(
             f"\nStopped by user. Progress saved to:\n"
-            f"- {checkpoint_path}\n"
-            + (f"- {partial_csv_path}\n" if partial_csv_path is not None else "")
+            f"- {cache_path}\n"
         )
         raise
 
@@ -852,23 +809,19 @@ def batch_primary_locations_resumable(
         document_location_resolver=resolve_document_location,
     )
 
-    save_checkpoint(out, checkpoint_path)
-    write_partial_csv(out, partial_csv_path)
     return out
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_geothermal_ollama.csv")
-    ap.add_argument("--out-csv", type=str, default="output/text/paragraph_locations_ollama.csv")
+    ap.add_argument("--input-csv", type=str, default="output/workflow/paragraph_geothermal_ollama.csv")
+    ap.add_argument("--out-csv", type=str, default="output/workflow/paragraph_locations_ollama.csv")
 
     ap.add_argument("--text-col", type=str, default="paragraph_text")
     ap.add_argument("--region-col", type=str, default="region_name")
 
-    ap.add_argument("--checkpoint", type=str, default="cache/geo_checkpoint.parquet")
-    ap.add_argument("--cache", type=str, default="cache/geo_cache.jsonl")
-    ap.add_argument("--partial-csv", type=str, default="cache/geo_partial_results.csv")
+    ap.add_argument("--cache", type=str, default="cache/locations_ollama.jsonl")
 
     ap.add_argument("--save-every", type=int, default=25)
     ap.add_argument("--sleep-s", type=float, default=0.0)
@@ -893,25 +846,20 @@ def main():
     if "uid" not in df.columns:
         df["uid"] = df.apply(lambda r: make_uid(r.to_dict()), axis=1)
 
-    # Keep uid as the content identifier, but align checkpoints on a unique row key.
+    # Keep uid as the content identifier, but use a unique row key internally.
     df = set_unique_row_index(df)
-    checkpoint_path = Path(args.checkpoint)
     cache_path = Path(args.cache)
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     out = batch_primary_locations_resumable(
         df=df,
         text_col=args.text_col,
         region_col=args.region_col,
-        checkpoint_path=checkpoint_path,
         cache_path=cache_path,
-        save_every=args.save_every,
         sleep_s=args.sleep_s,
         ollama_url=args.ollama_url,
         model=args.model,
         country_scope=country_scope,
-        partial_csv_path=Path(args.partial_csv) if args.partial_csv else None,
     )
 
     out_csv = Path(args.out_csv)
@@ -923,7 +871,7 @@ def main():
     if remaining:
         raise RuntimeError(
             f"Location extraction is incomplete ({remaining} rows unfinished). "
-            f"Progress is saved in {checkpoint_path} and {args.partial_csv}; "
+            f"Completed model calls are saved in {cache_path}; "
             "not writing the final Snakemake output CSV."
         )
 

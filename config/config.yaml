@@ -45,13 +45,13 @@ online_geocoding:
   country_codes: ""
   country_codes_by_language:
     german: de,at,ch
-  geonames_dir: cache/geonames
+  geonames_dir: data/geonames
   geonames_country_codes_by_language:
     dutch: nl
     italian: it
     german: de,at,ch
   user_agent: absa-geo-mapper
-  lock_path: cache/geocoder_cache.lock
+  lock_path: cache/geocode_unmatched_online.lock
   print_every: 25
   min_delay_seconds: 1.1
   timeout_seconds: 10
@@ -61,62 +61,56 @@ online_geocoding:
   max_queries: 0
 
 paths:
-  input_rtf_dir: input_data
+  input_rtf_dir: data/text_data
   shapes_parquet: data/shapes.parquet
   preprocess_rtf_chunks_dir: cache/preprocess_rtf_chunks
-  keywords_topics_base_csv: vocab/keywords_topics.csv
-  keywords_topics_csv: cache/keywords_topics_effective.csv
-  keyword_review_export_csv: annotation/frame_keyword_reviews.csv
-  keyword_review_candidates_csv: annotation/frame_keyword_review_candidates.csv
-  keyword_framework_audit_csv: output/text/keyword_framework_updates.csv
+  keywords_topics_base_csv: data/vocab/keywords_topics.csv
+  keywords_topics_csv: data/vocab/keywords_topics.csv
 
-  articles_csv: output/text/articles_cleaned.csv
-  paragraphs_csv: output/text/newspapers_cleaned_paragraphs.csv
-  paragraph_keyword_filtered_csv: output/text/newspapers_keyword_filtered_paragraphs.csv
-  paragraph_locations_csv: output/text/paragraph_locations_ollama.csv
-  paragraph_geothermal_csv: output/text/paragraph_geothermal_ollama.csv
-  paragraphs_with_geo_shapes_gpkg: output/text/paragraphs_with_geo_shapes.gpkg
-  paragraph_shapes_geocoding_csv: output/text/paragraph_shapes_geocoding.csv
-  paragraphs_with_geo_gpkg: output/text/paragraphs_with_geo.gpkg
-  paragraphs_with_geo_csv: output/text/paragraphs_with_geo.csv
-  geocoder_cache_jsonl: cache/geocoder_cache.jsonl
-  geocoder_cache_all_jsonl: cache/geocoder_cache.jsonl
-  geocoder_cache_done: cache/geocoder_cache.done
-  geocoding_cache_candidates_csv: cache/geocoding_cache_candidates.csv
-  geocoding_cache_candidates_all_csv: cache/geocoding_cache_candidates_all.csv
-  geocoding_unmatched_csv: cache/geocoding_unmatched.csv
-  geocoding_suggestions_csv: cache/geocoding_suggestions.csv
-  sentence_locations_csv: output/text/sentence_locations_ollama.csv
-  sentences_with_frames_long_csv: output/text/sentences_with_frames_long.csv
-  sentences_with_frames_short_csv: output/text/sentences_with_frames_short.csv
-  sentence_sentiment_csv: output/text/sentence_sentiment_llm.csv
-  sentences_with_categories_gpkg: output/text/sentences_with_categories.gpkg
-  sentences_with_categories_long_csv: output/text/sentences_with_categories_long.csv
-  sentences_with_categories_short_csv: output/text/sentences_with_categories_short.csv
-  sentences_with_categories_admin_gpkg: output/text/sentences_with_categories_admin.gpkg
-  sentences_with_categories_admin_csv: output/text/sentences_with_categories_admin.csv
+  articles_csv: output/workflow/articles_cleaned.csv
+  paragraphs_csv: output/workflow/newspapers_cleaned_paragraphs.csv
+  paragraph_keyword_filtered_csv: output/workflow/newspapers_keyword_filtered_paragraphs.csv
+  paragraph_locations_csv: output/workflow/paragraph_locations_ollama.csv
+  paragraph_geothermal_csv: output/workflow/paragraph_geothermal_ollama.csv
+  paragraphs_with_geo_shapes_gpkg: output/workflow/paragraphs_with_geo_shapes.gpkg
+  paragraph_shapes_geocoding_csv: output/workflow/paragraph_shapes_geocoding.csv
+  paragraphs_with_geo_gpkg: output/workflow/paragraphs_with_geo.gpkg
+  paragraphs_with_geo_csv: output/workflow/paragraphs_with_geo.csv
+  geocode_unmatched_online_cache_jsonl: cache/geocode_unmatched_online.jsonl
+  geocode_unmatched_online_done: cache/geocode_unmatched_online.done
+  geocoding_cache_candidates_csv: output/workflow/geocoding_online_candidates.csv
+  geocoding_cache_candidates_all_csv: output/generic/workflow/geocoding_online_candidates_all.csv
+  geocoding_unmatched_csv: output/text/geocoding_unmatched.csv
+  geocoding_suggestions_csv: output/text/geocoding_suggestions.csv
+  sentence_locations_csv: output/workflow/sentence_locations_ollama.csv
+  sentences_with_frames_long_csv: output/workflow/sentences_with_frames_long.csv
+  sentences_with_frames_short_csv: output/workflow/sentences_with_frames_short.csv
+  sentence_sentiment_csv: output/workflow/sentence_sentiment_llm.csv
+  sentences_with_categories_gpkg: output/workflow/sentences_with_categories.gpkg
+  sentences_with_categories_long_csv: output/workflow/sentences_with_categories_long.csv
+  sentences_with_categories_short_csv: output/workflow/sentences_with_categories_short.csv
+  sentences_with_categories_admin_gpkg: output/workflow/sentences_with_categories_admin.gpkg
+  sentences_with_categories_admin_csv: output/workflow/sentences_with_categories_admin.csv
   figures_dir: output/figures
-  articles_per_year_csv: output/figures/articles_per_year.csv
+  text_results_dir: output/text
+  articles_per_year_csv: output/text/articles_per_year.csv
   articles_per_year_png: output/figures/articles_per_year.png
-  top_newspapers_csv: output/figures/top_newspapers.csv
+  top_newspapers_csv: output/text/top_newspapers.csv
   top_newspapers_png: output/figures/top_newspapers.png
-  article_descriptives_summary_csv: output/figures/article_descriptives_summary.csv
+  article_descriptives_summary_csv: output/text/article_descriptives_summary.csv
   frame_keywords_dir: output/figures/frame_keywords
   region_frames_dir: output/figures/region_frames
-  province_sentiment_table_csv: output/figures/province_sentiment_table.csv
+  frame_keyword_figure_index_csv: output/text/frame_keyword_figure_index.csv
+  province_frame_counts_csv: output/text/province_frame_counts.csv
+  province_sentiment_summary_csv: output/text/province_sentiment_summary.csv
+  province_sentiment_table_csv: output/text/province_sentiment_table.csv
   provinces_sentiment_balance_png: output/figures/provinces_sentiment_balance.png
   provinces_sentiment_distribution_png: output/figures/provinces_sentiment_distribution.png
   categories_sentiment_distribution_png: output/figures/categories_sentiment_distribution.png
   locations_map_html: output/figures/locations_map.html
   annotation_sentences_csv: annotation/sentences_for_annotation.csv
-  data_tracking_csv: output/text/data_tracking.csv
+  data_tracking_csv: output/generic/text/data_tracking.csv
 
-  geo_checkpoint: cache/geo_checkpoint.parquet
-  geo_cache: cache/geo_cache.jsonl
-  geo_partial_csv: cache/geo_partial_results.csv
-  geo_class_checkpoint: cache/geo_class_checkpoint.parquet
-  geo_class_cache: cache/geo_class_cache.jsonl
-  geo_class_partial_csv: cache/geo_class_partial_results.csv
-  sentence_sentiment_checkpoint: cache/sentence_sentiment_ollama_checkpoint.parquet
-  sentence_sentiment_cache: cache/sentence_sentiment_ollama_cache.jsonl
-  sentence_sentiment_partial_csv: cache/sentence_sentiment_ollama_partial_results.csv
+  geo_cache: cache/locations_ollama.jsonl
+  geo_class_cache: cache/is_geothermal.jsonl
+  sentence_sentiment_cache: cache/sentiment_classification.jsonl

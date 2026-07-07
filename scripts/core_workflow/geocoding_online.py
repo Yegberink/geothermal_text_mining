@@ -17,10 +17,10 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point
 
-from country_scope import country_candidates_for_label, country_name_for_id, country_scope_from_args, country_candidates_json
-from shape_resources import centroid_point, load_shapes_parquet, normalize_key, nuts2_shapes
+from helpers.country_scope import country_candidates_for_label, country_name_for_id, country_scope_from_args, country_candidates_json
+from helpers.shape_resources import centroid_point, load_shapes_parquet, normalize_key, nuts2_shapes
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 EXTERNAL_LOCATION_POINTS = {
     "kenia": ("Kenya", -0.0236, 37.9062),
@@ -116,23 +116,23 @@ def configure_ssl_cert_bundle() -> None:
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-dir", type=str, default=str(DEFAULT_PROJECT_DIR))
-    ap.add_argument("--input-csv", type=str, default="output/text/paragraph_shapes_geocoding.csv")
+    ap.add_argument("--input-csv", type=str, default="output/workflow/paragraph_shapes_geocoding.csv")
     ap.add_argument("--shapes-parquet", type=str, default="data/shapes.parquet")
-    ap.add_argument("--output-gpkg", type=str, default="output/text/paragraphs_with_geo.gpkg")
-    ap.add_argument("--output-csv", type=str, default="output/text/paragraphs_with_geo.csv")
+    ap.add_argument("--output-gpkg", type=str, default="output/workflow/paragraphs_with_geo.gpkg")
+    ap.add_argument("--output-csv", type=str, default="output/workflow/paragraphs_with_geo.csv")
     ap.add_argument(
         "--geocoder-cache-path",
         "--cache-path",
         dest="geocoder_cache_path",
         type=str,
-        default="cache/geocoder_cache.jsonl",
+        default="cache/geocode_unmatched_online.jsonl",
     )
     ap.add_argument("--extra-geocoder-cache-path", action="append", default=[])
     ap.add_argument("--overrides-csv", type=str, default="")
-    ap.add_argument("--unmatched-csv", type=str, default="cache/geocoding_unmatched.csv")
-    ap.add_argument("--suggestions-csv", type=str, default="cache/geocoding_suggestions.csv")
+    ap.add_argument("--unmatched-csv", type=str, default="output/text/geocoding_unmatched.csv")
+    ap.add_argument("--suggestions-csv", type=str, default="output/text/geocoding_suggestions.csv")
     ap.add_argument("--skip-geocoder-cache", action="store_true")
-    ap.add_argument("--geonames-dir", type=str, default="cache/geonames")
+    ap.add_argument("--geonames-dir", type=str, default="data/geonames")
     ap.add_argument("--geonames-country-codes", type=str, default="")
     ap.add_argument("--disable-geonames", action="store_true")
     ap.add_argument("--download-geonames", action="store_true")

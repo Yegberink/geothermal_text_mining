@@ -1,0 +1,39 @@
+strong:
+  - Erdwaerme
+  - Erdwärme
+  - Geothermie
+  - geothermische Energie
+  - geothermische Wärme
+  - Geothermieanlage
+  - Geothermiekraftwerk
+  - Geothermiebohrung
+  - geothermische Wärmepumpe
+  - Erdwärmesonde
+  - geothermische Fernwärme
+
+contextual:
+  - Waermequelle
+  - Wärmequelle
+  - Dublette
+  - Bohrung
+  - Foerderbohrung
+  - Förderbohrung
+  - Injektionsbohrung
+  - Reinjektion
+  - Fluid
+  - Reservoir
+  - Untergrund
+  - Grundwasserleiter
+  - Wärmepumpe
+
+competing:
+  - Erdöl
+  - Öl
+  - Erdgas
+  - Kohlenwasserstoffe
+  - Ölbohrung
+  - CO2-Speicherung
+  - Thermalwasser
+  - Therme
+  - Solarenergie
+  - Windenergie
