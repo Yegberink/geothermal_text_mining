@@ -191,8 +191,25 @@ def read_csv_with_encoding_fallback(path: Path, **kwargs: object) -> pd.DataFram
         return pd.read_csv(path, encoding="cp1252", **kwargs)
 
 
+def infer_keyword_csv_separator(path: Path) -> str:
+    for encoding in ("utf-8", "cp1252"):
+        try:
+            sample = path.read_text(encoding=encoding)[:4096]
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        return KEYWORD_CSV_SEPARATOR
+
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,\t")
+    except csv.Error:
+        return KEYWORD_CSV_SEPARATOR
+    return dialect.delimiter
+
+
 def load_keyword_csv(path: Path) -> pd.DataFrame:
-    df = read_csv_with_encoding_fallback(path, sep=KEYWORD_CSV_SEPARATOR)
+    df = read_csv_with_encoding_fallback(path, sep=infer_keyword_csv_separator(path))
     return df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
 
 

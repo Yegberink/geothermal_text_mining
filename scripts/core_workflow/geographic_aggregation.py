@@ -46,8 +46,9 @@ def assign_nuts2(text_gdf: gpd.GeoDataFrame, nuts2: gpd.GeoDataFrame) -> gpd.Geo
         country_names = country_names.where(country_names.notna() & country_names.astype(str).str.strip().ne(""), fallback_names)
         country_names = country_names.where(country_names.notna() & country_names.astype(str).str.strip().ne(""), text_gdf.loc[country_rows, "geo_name_matched"])
         text_gdf.loc[country_rows, "country_name"] = country_names.values
-        text_gdf.loc[country_rows, "province_name"] = country_names.values
-        text_gdf.loc[country_rows, "province_code"] = text_gdf.loc[country_rows, "country_id"].values
+        for col in ["province_name", "province_code", "nuts2_id", "nuts2_name"]:
+            if col in text_gdf.columns:
+                text_gdf.loc[country_rows, col] = None
         text_gdf.loc[country_rows, "admin_level"] = "country"
 
     non_country = text_gdf["geo_level"].astype(str).str.lower().ne("country")

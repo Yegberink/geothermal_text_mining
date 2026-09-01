@@ -127,6 +127,20 @@ def is_country_location(df: pd.DataFrame, country: str) -> pd.Series:
     return df.apply(lambda row: single_country_from_row(row) in set(scope.countries), axis=1)
 
 
+def province_row_mask(df: pd.DataFrame) -> pd.Series:
+    if "province_name" not in df.columns:
+        return pd.Series(False, index=df.index)
+
+    has_province = df["province_name"].notna() & df["province_name"].astype(str).str.strip().ne("")
+    if "admin_level" in df.columns:
+        return has_province & df["admin_level"].astype(str).str.strip().str.lower().eq("nuts2")
+
+    province_key = df["province_name"].fillna("").map(normalize_key)
+    country = df["_single_country"] if "_single_country" in df.columns else pd.Series("", index=df.index, dtype=object)
+    country_key = country.fillna("").map(normalize_key)
+    return has_province & province_key.ne(country_key) & ~province_key.isin({"all sentences", "average", "country average"})
+
+
 def load_frame_keyword_vocab(path: Path) -> tuple[list[str], dict[str, set[str]], dict[str, dict[str, str]]]:
     vocab_df = load_keyword_csv(path)
 
@@ -184,7 +198,6 @@ def build_province_summary(
 
     df["_single_country"] = df.apply(row_country, axis=1)
 
-    has_province = df["province_name"].notna() & df["province_name"].astype(str).str.strip().ne("")
     overall_counts = df["_sent"].value_counts().reindex(SENTIMENT_ORDER, fill_value=0)
     overall_total = int(overall_counts.sum())
     overall = pd.DataFrame(
@@ -231,8 +244,8 @@ def build_province_summary(
     else:
         country_grouped = pd.DataFrame(columns=overall.columns)
 
-    df = df.dropna(subset=["province_name"])
-    df = df[df["province_name"].astype(str).str.strip().ne("")]
+    df = df.loc[province_row_mask(df)].copy()
+    df["province_name"] = df["province_name"].astype(str).str.strip()
 
     grouped = (
         df.groupby(["province_name", "_sent"])
@@ -489,7 +502,11 @@ def build_region_frame_counts(
 
     eligible_provinces = set(
         province_tbl.loc[
-            province_tbl["province_name"].astype(str).ne("All sentences"),
+            (
+                province_tbl["aggregation_level"].astype(str).eq("nuts2")
+                if "aggregation_level" in province_tbl.columns
+                else province_tbl["province_name"].astype(str).ne("All sentences")
+            ),
             "province_name",
         ]
         .dropna()
@@ -523,6 +540,8 @@ def eligible_province_summary(province_tbl: pd.DataFrame) -> pd.DataFrame:
         & province_tbl["province_name"].astype(str).str.strip().ne("")
         & province_tbl["province_name"].astype(str).ne("All sentences")
     ].copy()
+    if "aggregation_level" in eligible.columns:
+        eligible = eligible[eligible["aggregation_level"].astype(str).eq("nuts2")].copy()
     return eligible
 
 

@@ -122,7 +122,7 @@ def _preprocess_chunks_dir(language):
     )
 
 
-def _discover_rtf_input_files(language):
+def _discover_source_input_files(language):
     input_dir = Path(path_for(language, "input_rtf_dir"))
     if not input_dir.exists():
         return []
@@ -130,12 +130,12 @@ def _discover_rtf_input_files(language):
         str(path)
         for path in input_dir.rglob("*")
         if path.is_file()
-        and path.suffix.lower() == ".rtf"
+        and path.suffix.lower() in {".rtf", ".pdf"}
         and "doclist" not in path.stem.lower()
     )
 
 
-def _rtf_id_for_path(language, path_str):
+def _source_id_for_path(language, path_str):
     input_dir = Path(path_for(language, "input_rtf_dir"))
     path = Path(path_str)
     try:
@@ -143,29 +143,29 @@ def _rtf_id_for_path(language, path_str):
     except ValueError:
         rel = path.name
     stem = Path(rel).with_suffix("").as_posix()
-    safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("._-") or "rtf"
+    safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("._-") or "source"
     digest = hashlib.sha1(rel.encode("utf-8")).hexdigest()[:10]
     return f"{safe_stem[:90]}-{digest}"
 
 
-RTF_ID_TO_INPUT_BY_LANGUAGE = {
+SOURCE_ID_TO_INPUT_BY_LANGUAGE = {
     language: {
-        _rtf_id_for_path(language, path): path
-        for path in _discover_rtf_input_files(language)
+        _source_id_for_path(language, path): path
+        for path in _discover_source_input_files(language)
     }
     for language in LANGUAGES
 }
 
 
-def _rtf_chunks(language):
+def _source_chunks(language):
     return [
         str(Path(_preprocess_chunks_dir(language)) / "raw_articles" / f"{rtf_id}.csv")
-        for rtf_id in sorted(RTF_ID_TO_INPUT_BY_LANGUAGE.get(language, {}))
+        for rtf_id in sorted(SOURCE_ID_TO_INPUT_BY_LANGUAGE.get(language, {}))
     ]
 
 
-def _rtf_raw_article_args(language):
-    chunks = _rtf_chunks(language)
+def _source_raw_article_args(language):
+    chunks = _source_chunks(language)
     return (
         "--input-raw-articles-csv " + " ".join(shlex.quote(path) for path in chunks)
         if chunks
@@ -259,7 +259,7 @@ TRACKING_STAGE_KEYS = [
 def _data_tracking_inputs(wildcards=None):
     files = [str(PROJECT_DIR / "scripts" / "results_tracking" / "build_data_tracking_table.py")]
     for language in LANGUAGES:
-        files.extend(_rtf_chunks(language))
+        files.extend(_source_chunks(language))
         files.extend(path_for(language, key) for key in TRACKING_STAGE_KEYS)
     return files
 
@@ -269,12 +269,12 @@ rule all:
         ALL_TARGETS,
 
 
-rule preprocess_single_rtf_to_raw_articles:
+rule preprocess_single_source_to_raw_articles:
     input:
-        rtf=lambda wildcards: RTF_ID_TO_INPUT_BY_LANGUAGE[wildcards.language][wildcards.rtf_id],
+        source=lambda wildcards: SOURCE_ID_TO_INPUT_BY_LANGUAGE[wildcards.language][wildcards.source_id],
         script=str(PROJECT_DIR / "scripts" / "core_workflow" / "preprocess_rtf_to_paragraphs.py"),
     output:
-        raw=pattern_for("preprocess_rtf_chunks_dir") + "/raw_articles/{rtf_id}.csv",
+        raw=pattern_for("preprocess_rtf_chunks_dir") + "/raw_articles/{source_id}.csv",
     params:
         input_dir=lambda wildcards: path_for(wildcards.language, "input_rtf_dir"),
     shell:
@@ -282,8 +282,8 @@ rule preprocess_single_rtf_to_raw_articles:
         {PYTHON} scripts/core_workflow/preprocess_rtf_to_paragraphs.py \
           --project-dir {PROJECT_DIR} \
           --language {wildcards.language} \
-          --input-rtf-dir {params.input_dir:q} \
-          --input-rtf-file {input.rtf:q} \
+          --input-dir {params.input_dir:q} \
+          --input-file {input.source:q} \
           --output-raw-articles-csv {output.raw:q} \
           --raw-only
         """
@@ -291,20 +291,20 @@ rule preprocess_single_rtf_to_raw_articles:
 
 rule preprocess_rtf_to_paragraphs:
     input:
-        chunks=lambda wildcards: _rtf_chunks(wildcards.language),
+        chunks=lambda wildcards: _source_chunks(wildcards.language),
         script=str(PROJECT_DIR / "scripts" / "core_workflow" / "preprocess_rtf_to_paragraphs.py"),
     output:
         paragraphs=pattern_for("paragraphs_csv"),
         articles=pattern_for("articles_csv"),
     params:
         input_dir=lambda wildcards: path_for(wildcards.language, "input_rtf_dir"),
-        raw_article_args=lambda wildcards: _rtf_raw_article_args(wildcards.language),
+        raw_article_args=lambda wildcards: _source_raw_article_args(wildcards.language),
     shell:
         """
         {PYTHON} scripts/core_workflow/preprocess_rtf_to_paragraphs.py \
           --project-dir {PROJECT_DIR} \
           --language {wildcards.language} \
-          --input-rtf-dir {params.input_dir:q} \
+          --input-dir {params.input_dir:q} \
           {params.raw_article_args} \
           --output-paragraph-csv {output.paragraphs:q} \
           --output-articles-csv {output.articles:q} \
@@ -741,6 +741,7 @@ rule visualize_overarching_results:
         frame_country_balance="output/generic/figures/all_languages_frames_country_sentiment_balance.png",
         frame_country_balance_table="output/generic/text/all_languages_frames_country_sentiment_balance_table.csv",
         extreme_province_frame_shares_table="output/generic/text/all_languages_extreme_province_frame_shares_table.csv",
+        extreme_region_keywords_table="output/generic/text/all_languages_extreme_region_keyword_mentions_table.csv",
         frame_extreme_region_balance_table="output/generic/text/all_languages_frames_extreme_region_sentiment_balance_table.csv",
         frame_extreme_region_balance="output/generic/figures/all_languages_frames_extreme_region_sentiment_balance.png",
         frame_mentions_stacked_table="output/generic/text/frame_mentions_100pct_stacked_table.csv",

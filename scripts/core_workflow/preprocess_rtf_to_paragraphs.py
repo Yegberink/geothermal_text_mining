@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Standalone newspaper RTF -> paragraph pipeline.
+Standalone newspaper RTF/PDF -> paragraph pipeline.
 
 What this does:
-1) Recursively reads all .rtf files under INPUT_RTF_DIR
-2) Converts RTF -> plain text via striprtf, splits into articles by "End of Document"
+1) Recursively reads all .rtf and .pdf files under the input directory
+2) Converts each source to plain text and splits exports by "End of Document"
 3) Extracts metadata (title/newspaper/date/etc.) + body
 4) Optional cleaning + optional filtering (all controlled by constants below)
 5) Splits body into paragraphs (fixes hard-wrapped newlines)
@@ -75,6 +75,7 @@ MIN_WORDS_FOR_STANDALONE_LAYOUT_PARAGRAPH = 25
 MIN_WORDS_FOR_ATTACHED_HEADING = 1
 LAYOUT_DEBUG_PREVIEW_CHARS = 1200
 VERBOSE = False
+SUPPORTED_SOURCE_SUFFIXES = {".rtf", ".pdf"}
 
 RAW_ARTICLE_COLUMNS = [
     "source_file",
@@ -164,12 +165,43 @@ def read_rtf_file(p: Path) -> str:
     raise ValueError(f"Could not decode {p} with utf-8 or cp1252")
 
 
-def discover_rtf_paths(rtf_dir: Path) -> List[Path]:
-    """Find real RTF article exports recursively, including nested German folders."""
-    all_paths = sorted(p for p in rtf_dir.rglob("*") if p.is_file() and p.suffix.lower() == ".rtf")
+def pdf_to_text(pdf_path: Path) -> str:
+    from pypdf import PdfReader
+
+    reader = PdfReader(pdf_path)
+    page_texts: List[str] = []
+    for page in reader.pages:
+        text = page.extract_text() or ""
+        lines = [
+            line
+            for line in text.splitlines()
+            if not re.fullmatch(r"\s*Page\s+\d+\s+of\s+\d+\s*", line, flags=re.IGNORECASE)
+        ]
+        cleaned = "\n".join(lines).strip()
+        if cleaned:
+            page_texts.append(cleaned)
+    return "\n\n".join(page_texts)
+
+
+def source_to_text(source_path: Path) -> str:
+    suffix = source_path.suffix.lower()
+    if suffix == ".rtf":
+        return rtf_to_text(read_rtf_file(source_path))
+    if suffix == ".pdf":
+        return pdf_to_text(source_path)
+    raise ValueError(f"Unsupported newspaper source format: {source_path}")
+
+
+def discover_source_paths(input_dir: Path) -> List[Path]:
+    """Find supported article exports recursively, excluding document-list files."""
+    all_paths = sorted(
+        p
+        for p in input_dir.rglob("*")
+        if p.is_file() and p.suffix.lower() in SUPPORTED_SOURCE_SUFFIXES
+    )
     doclist_paths = [p for p in all_paths if "doclist" in p.stem.lower()]
     if doclist_paths:
-        log(f"[load] Skipping Lexis document-list RTF files: {len(doclist_paths)}")
+        log(f"[load] Skipping Lexis document-list files: {len(doclist_paths)}")
     return [p for p in all_paths if p not in set(doclist_paths)]
 
 
@@ -358,21 +390,20 @@ def extract_body(article: str) -> str:
     return rest.strip()
 
 
-def load_rtf_articles_from_paths(
-    rtf_paths: Iterable[Path],
-    rtf_root: Path,
+def load_articles_from_paths(
+    source_paths: Iterable[Path],
+    input_root: Path,
     month_translations: Dict[str, str],
     weekday_names: List[str],
 ) -> pd.DataFrame:
-    rtf_paths = list(rtf_paths)
-    log(f"[load] Reading {len(rtf_paths)} .rtf files")
+    source_paths = list(source_paths)
+    log(f"[load] Reading {len(source_paths)} RTF/PDF files")
 
     rows: List[Dict[str, object]] = []
-    for fp in tqdm(rtf_paths, desc="Reading RTFs", disable=not VERBOSE):
-        rtf_content = read_rtf_file(fp)
-        plain_text = normalize_article_text(rtf_to_text(rtf_content))
+    for fp in tqdm(source_paths, desc="Reading sources", disable=not VERBOSE):
+        plain_text = normalize_article_text(source_to_text(fp))
         articles = [a for a in _END_DOC_SPLIT_RE.split(plain_text) if a and a.strip()]
-        source_relative_path, source_folder = source_path_parts(fp, rtf_root)
+        source_relative_path, source_folder = source_path_parts(fp, input_root)
 
         for art in articles:
             meta = parse_header_metadata(art, month_translations, weekday_names)
@@ -392,9 +423,9 @@ def load_all_rtf_articles(
     month_translations: Dict[str, str],
     weekday_names: List[str],
 ) -> pd.DataFrame:
-    rtf_paths = discover_rtf_paths(rtf_dir)
-    log(f"[load] Found {len(rtf_paths)} .rtf files under: {rtf_dir}")
-    return load_rtf_articles_from_paths(rtf_paths, rtf_dir, month_translations, weekday_names)
+    source_paths = discover_source_paths(rtf_dir)
+    log(f"[load] Found {len(source_paths)} RTF/PDF files under: {rtf_dir}")
+    return load_articles_from_paths(source_paths, rtf_dir, month_translations, weekday_names)
 
 
 def load_single_rtf_articles(
@@ -404,9 +435,9 @@ def load_single_rtf_articles(
     weekday_names: List[str],
 ) -> pd.DataFrame:
     if rtf_file.stem.lower().find("doclist") >= 0:
-        log(f"[load] Skipping Lexis document-list RTF file: {rtf_file}")
+        log(f"[load] Skipping Lexis document-list file: {rtf_file}")
         return pd.DataFrame(columns=RAW_ARTICLE_COLUMNS)
-    return load_rtf_articles_from_paths([rtf_file], rtf_root, month_translations, weekday_names)
+    return load_articles_from_paths([rtf_file], rtf_root, month_translations, weekday_names)
 
 
 def load_raw_article_csvs(raw_article_csvs: List[Path]) -> pd.DataFrame:
@@ -1970,8 +2001,20 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--language", type=str, default="")
     ap.add_argument("--project-dir", type=str, default=str(PROJECT_DIR))
     ap.add_argument("--config", type=str, default=str(DEFAULT_CONFIG_PATH))
-    ap.add_argument("--input-rtf-dir", type=str, default=str(INPUT_RTF_DIR))
-    ap.add_argument("--input-rtf-file", type=str, default="")
+    ap.add_argument(
+        "--input-dir",
+        "--input-rtf-dir",
+        dest="input_dir",
+        type=str,
+        default=str(INPUT_RTF_DIR),
+    )
+    ap.add_argument(
+        "--input-file",
+        "--input-rtf-file",
+        dest="input_file",
+        type=str,
+        default="",
+    )
     ap.add_argument("--input-raw-articles-csv", type=str, nargs="+", default=[])
     ap.add_argument("--output-raw-articles-csv", type=str, default=str(OUTPUT_RAW_ARTICLES_CSV))
     ap.add_argument("--raw-only", action="store_true")
@@ -2044,8 +2087,8 @@ def main() -> None:
 
     project_dir = Path(args.project_dir).expanduser().resolve()
     config_path = Path(args.config).expanduser().resolve()
-    input_rtf_dir = Path(args.input_rtf_dir).expanduser().resolve()
-    input_rtf_file = Path(args.input_rtf_file).expanduser().resolve() if args.input_rtf_file else None
+    input_dir = Path(args.input_dir).expanduser().resolve()
+    input_file = Path(args.input_file).expanduser().resolve() if args.input_file else None
     input_raw_article_csvs = [
         Path(path).expanduser().resolve() for path in args.input_raw_articles_csv
     ]
@@ -2083,24 +2126,24 @@ def main() -> None:
                 "Input raw article CSV(s) do not exist: "
                 + ", ".join(str(path) for path in missing_raw_csvs)
             )
-    elif input_rtf_file is not None and not input_rtf_file.exists():
-        raise FileNotFoundError(f"Input RTF file does not exist: {input_rtf_file}")
-    elif not input_rtf_dir.exists():
-        raise FileNotFoundError(f"INPUT_RTF_DIR does not exist: {input_rtf_dir}")
+    elif input_file is not None and not input_file.exists():
+        raise FileNotFoundError(f"Input source file does not exist: {input_file}")
+    elif not input_dir.exists():
+        raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
 
     # 1) Load raw articles
     if input_raw_article_csvs:
         df_raw = load_raw_article_csvs(input_raw_article_csvs)
         log(f"[main] Loaded raw article chunks: {len(input_raw_article_csvs)} CSV files")
-    elif input_rtf_file is not None:
+    elif input_file is not None:
         df_raw = load_single_rtf_articles(
-            input_rtf_file,
-            input_rtf_dir,
+            input_file,
+            input_dir,
             month_translations,
             weekday_names,
         )
     else:
-        df_raw = load_all_rtf_articles(input_rtf_dir, month_translations, weekday_names)
+        df_raw = load_all_rtf_articles(input_dir, month_translations, weekday_names)
     summary_stats["loaded_documents"] = len(df_raw)
     log(f"[main] Loaded {len(df_raw)} raw article blocks")
     log(f"[workflow_table] raw_article_blocks: {len(df_raw)}")

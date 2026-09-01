@@ -53,7 +53,7 @@ In short, the current workflow is:
 
 The workflow expects one folder per language:
 
-- raw newspaper `.rtf` files in `data/text_data/{language}/`
+- raw newspaper `.rtf` and `.pdf` files in `data/text_data/{language}/`
 - a frame/topic keyword file in `data/vocab/{language}/keywords_topics.csv`
 
 The shared administrative geography source is `data/shapes.parquet`, containing European country shapes and NUTS2 regions for the countries of interest. It is used for local matching, aggregation, and map visualisation. GeoNames country extracts live in `data/geonames/` for offline point matching. Public online geocoders are not contacted by the default workflow.
