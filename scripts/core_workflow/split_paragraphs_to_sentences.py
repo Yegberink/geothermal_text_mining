@@ -95,8 +95,12 @@ def main() -> None:
         raise ValueError(f"Expected geometry columns in input CSV: {sorted(missing_geo_cols)}")
 
     input_paragraphs = len(df)
-    has_geo = df["geom_point_wkt"].notna() | df["geom_poly_wkt"].notna()
+    has_geo = (
+        df["geom_point_wkt"].fillna("").astype(str).str.strip().ne("")
+        | df["geom_poly_wkt"].fillna("").astype(str).str.strip().ne("")
+    )
     paragraphs_without_geo = int((~has_geo).sum())
+    df = df.loc[has_geo].copy()
 
     nlp = build_segmenter(args.language)
     rows: list[dict] = []
@@ -117,7 +121,11 @@ def main() -> None:
             out_row["sentence_uid"] = make_sentence_uid(paragraph_uid, sentence_id, sentence_text)
             rows.append(out_row)
 
-    out = pd.DataFrame(rows)
+    sentence_columns = [
+        "paragraph_uid", "sentence_id", "sentence_count_in_paragraph",
+        "sentence_text", "sentence_word_count", "sentence_char_count", "sentence_uid",
+    ]
+    out = pd.DataFrame(rows, columns=list(dict.fromkeys([*df.columns, *sentence_columns])))
     out.to_csv(output_csv, index=False, encoding="utf-8")
     print(f"Wrote: {output_csv} (rows={len(out)})")
     print(f"[workflow_table] paragraphs_before_sentence_geo_filter: {input_paragraphs}")

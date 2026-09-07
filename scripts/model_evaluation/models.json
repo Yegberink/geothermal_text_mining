@@ -1,0 +1,145 @@
+[
+  {
+    "model_id": "qwen2.5:14b",
+    "backend": "ollama"
+  },
+  {
+    "model_id": "llama3.1:8b",
+    "backend": "ollama"
+  },
+  {
+    "model_id": "qwen2.5:7b",
+    "backend": "ollama"
+  },
+  {
+    "model_id": "mistral",
+    "backend": "ollama"
+  },
+  {
+    "model_id": "phi3",
+    "backend": "ollama"
+  },
+  {
+    "model_id": "BramVanroy/bert-base-dutch-cased-hebban-reviews5",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "1",
+      "1": "2",
+      "2": "3",
+      "3": "4",
+      "4": "5"
+    },
+    "revision": "f0f5dc9d45b48382eaf2b0ad3f5c15023c0593ae"
+  },
+  {
+    "model_id": "BramVanroy/bert-base-dutch-cased-hebban-reviews",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "negative",
+      "1": "neutral",
+      "2": "positive"
+    },
+    "revision": "04e818b74115f79ab3cf680a20c65a5c849af1a9"
+  },
+  {
+    "model_id": "BramVanroy/xlm-roberta-base-hebban-reviews",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "negative",
+      "1": "neutral",
+      "2": "positive"
+    },
+    "revision": "9b0011cafa92a0335c93b859316cffcbe0444fbb"
+  },
+  {
+    "model_id": "oralunal/sentiment",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "Very Negative",
+      "1": "Negative",
+      "2": "Neutral",
+      "3": "Positive",
+      "4": "Very Positive"
+    },
+    "revision": "80110ac9f250b8d73f74584dcd440d831952e52d"
+  },
+  {
+    "model_id": "oxygeneDev/sentiment-multilingual",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "Very Negative",
+      "1": "Negative",
+      "2": "Neutral",
+      "3": "Positive",
+      "4": "Very Positive"
+    },
+    "revision": "4753f01adbd7509b60f4e2eb8997368b8d32b55b"
+  },
+  {
+    "model_id": "tabularisai/multilingual-sentiment-analysis",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "Very Negative",
+      "1": "Negative",
+      "2": "Neutral",
+      "3": "Positive",
+      "4": "Very Positive"
+    },
+    "revision": "eea032081f8d247b4303ef3565e7cec1b6f201c9"
+  },
+  {
+    "model_id": "BramVanroy/robbert-v2-dutch-base-hebban-reviews",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "negative",
+      "1": "neutral",
+      "2": "positive"
+    },
+    "revision": "1b8ddabeb1f095a90f8443a7fd263e09c33dd217"
+  },
+  {
+    "model_id": "BramVanroy/bert-base-multilingual-cased-hebban-reviews",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "negative",
+      "1": "neutral",
+      "2": "positive"
+    },
+    "revision": "73d954e9e1e99d98c1e542f236049dc8152d66e7"
+  },
+  {
+    "model_id": "BramVanroy/robbert-v2-dutch-base-hebban-reviews5",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "1",
+      "1": "2",
+      "2": "3",
+      "3": "4",
+      "4": "5"
+    },
+    "revision": "e6c62a8bd2bf8f70ee1a413ca99f2b120de44066"
+  },
+  {
+    "model_id": "BramVanroy/bert-base-multilingual-cased-hebban-reviews5",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "1",
+      "1": "2",
+      "2": "3",
+      "3": "4",
+      "4": "5"
+    },
+    "revision": "873abe60b307a7b0cfb3254389f522501c9055a5"
+  },
+  {
+    "model_id": "ZombitX64/MultiSent-E5-Pro",
+    "backend": "huggingface",
+    "label_names": {
+      "0": "question",
+      "1": "negative",
+      "2": "neutral",
+      "3": "positive"
+    },
+    "revision": "71fba91e7e4dba37f68591799d17c143bd9ac1bc"
+  }
+]

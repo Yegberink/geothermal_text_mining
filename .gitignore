@@ -40,3 +40,13 @@ annotation/
 # OS files
 *.DS_Store
 *.gpkg
+
+# Keep the independent annotation notebook; manual labels/results remain local.
+!annotation/
+annotation/*
+!annotation/final/
+annotation/final/*
+!annotation/final/prepare_annotation.ipynb
+!annotation/final/app.py
+!annotation/final/annotation_store.py
+!annotation/final/README.md

@@ -214,16 +214,9 @@ DATA_TRACKING_CSV = PATHS.get("data_tracking_csv", "output/generic/text/data_tra
 OVERARCHING_TARGETS = [
     "output/generic/figures/all_languages_province_sentiment_balance.png",
     "output/generic/text/all_languages_province_sentiment_table.csv",
-    "output/generic/figures/all_languages_frames_sentiment_distribution.png",
-    "output/generic/text/all_languages_frames_sentiment_table.csv",
-    "output/generic/figures/all_languages_frames_country_sentiment_balance.png",
-    "output/generic/text/all_languages_frames_country_sentiment_balance_table.csv",
     "output/generic/text/all_languages_extreme_province_frame_shares_table.csv",
-    "output/generic/text/all_languages_frames_extreme_region_sentiment_balance_table.csv",
-    "output/generic/figures/all_languages_frames_extreme_region_sentiment_balance.png",
     "output/generic/text/frame_mentions_100pct_stacked_table.csv",
     "output/generic/figures/frame_mentions_100pct_stacked.png",
-    "output/generic/figures/frame_mentions_100pct_stacked.pdf",
     "output/generic/figures/all_languages_province_sentiment_map.png",
     DATA_TRACKING_CSV,
 ]
@@ -240,19 +233,9 @@ if MAKE_ANNOTATION_DF:
 
 
 TRACKING_STAGE_KEYS = [
-    "articles_csv",
-    "paragraphs_csv",
-    "paragraph_keyword_filtered_csv",
-    "paragraph_geothermal_csv",
-    "paragraph_locations_csv",
-    "paragraph_shapes_geocoding_csv",
-    "paragraphs_with_geo_csv",
-    "geocoding_unmatched_csv",
-    "sentence_locations_csv",
-    "sentences_with_frames_long_csv",
-    "sentence_sentiment_csv",
-    "sentences_with_categories_long_csv",
-    "sentences_with_categories_admin_csv",
+    "articles_csv", "paragraphs_csv", "paragraph_geothermal_csv",
+    "paragraphs_with_geo_csv", "sentence_locations_csv",
+    "sentences_with_frames_long_csv", "sentence_sentiment_csv",
 ]
 
 
@@ -330,7 +313,7 @@ rule filter_paragraphs_by_keywords:
 
 rule classify_geothermal:
     input:
-        paragraphs=pattern_for("paragraph_keyword_filtered_csv"),
+        paragraphs=pattern_for("paragraphs_csv"),
         lexicon=lambda wildcards: _language_resource_path(wildcards.language, "geo_keywords.yaml"),
     output:
         csv=pattern_for("paragraph_geothermal_csv"),
@@ -586,7 +569,7 @@ rule identify_sentence_frames:
 
 rule classify_sentence_sentiment:
     input:
-        pattern_for("sentences_with_frames_long_csv"),
+        pattern_for("sentence_locations_csv"),
     output:
         pattern_for("sentence_sentiment_csv"),
     params:
@@ -731,22 +714,15 @@ rule visualize_absa_results:
 rule visualize_overarching_results:
     input:
         admin_csvs=expand(pattern_for("sentences_with_categories_admin_csv"), language=LANGUAGES),
+        sentiment_csvs=expand(pattern_for("sentence_sentiment_csv"), language=LANGUAGES),
         shapes=PATHS["shapes_parquet"],
         script=str(PROJECT_DIR / "scripts" / "results_tracking" / "visualize_overarching_results.py"),
     output:
         balance="output/generic/figures/all_languages_province_sentiment_balance.png",
         province_table="output/generic/text/all_languages_province_sentiment_table.csv",
-        frames="output/generic/figures/all_languages_frames_sentiment_distribution.png",
-        frames_table="output/generic/text/all_languages_frames_sentiment_table.csv",
-        frame_country_balance="output/generic/figures/all_languages_frames_country_sentiment_balance.png",
-        frame_country_balance_table="output/generic/text/all_languages_frames_country_sentiment_balance_table.csv",
         extreme_province_frame_shares_table="output/generic/text/all_languages_extreme_province_frame_shares_table.csv",
-        extreme_region_keywords_table="output/generic/text/all_languages_extreme_region_keyword_mentions_table.csv",
-        frame_extreme_region_balance_table="output/generic/text/all_languages_frames_extreme_region_sentiment_balance_table.csv",
-        frame_extreme_region_balance="output/generic/figures/all_languages_frames_extreme_region_sentiment_balance.png",
         frame_mentions_stacked_table="output/generic/text/frame_mentions_100pct_stacked_table.csv",
         frame_mentions_stacked_png="output/generic/figures/frame_mentions_100pct_stacked.png",
-        frame_mentions_stacked_pdf="output/generic/figures/frame_mentions_100pct_stacked.pdf",
         sentiment_map="output/generic/figures/all_languages_province_sentiment_map.png",
     params:
         output_dir="output/generic/figures",
@@ -760,6 +736,7 @@ rule visualize_overarching_results:
           --languages {params.languages} \
           --countries {params.countries} \
           --admin-csvs {input.admin_csvs} \
+          --sentiment-csvs {input.sentiment_csvs} \
           --shapes-parquet {input.shapes} \
           --output-dir {params.output_dir} \
           --table-dir {params.table_dir}

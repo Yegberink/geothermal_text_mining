@@ -2,7 +2,7 @@
 
 This repository contains a Snakemake workflow for mining geothermal-related newspaper text, extracting and geocoding paragraph-level locations, assigning frames and sentiment at sentence level, aggregating the results to language-specific administrative areas, and preparing annotation data for manual review.
 
-The workflow is paragraph-based for keyword prefiltering, geothermal relevance, location extraction, and geocoding. It is sentence-based for frame detection, sentiment, visualisation inputs, and annotation. Sentence rows inherit the paragraph-level location and geometry fields.
+The workflow is paragraph-based for geothermal relevance, location extraction, and geocoding. It is sentence-based for frame detection, sentiment, visualisation inputs, and annotation. Sentence rows inherit the paragraph-level location and geometry fields. Sentiment covers every sentence from a paragraph labelled `YES` with point or polygon geometry; frame keywords do not determine sentiment eligibility.
 
 ## Current workflow
 
@@ -11,21 +11,21 @@ The current `Snakefile` runs the following pipeline:
 1. `scripts/core_workflow/preprocess_rtf_to_paragraphs.py`
    Converts raw `.rtf` newspaper files into cleaned article and paragraph tables.
 2. `scripts/core_workflow/filter_paragraphs_by_keywords.py`
-   Keeps only paragraphs that mention at least one keyword from the language vocabulary.
+   Remains available as a legacy standalone keyword-filtered paragraph export. Neither sentiment nor the compact tracking table depends on it.
 3. `scripts/core_workflow/is_geothermal.py`
-   Uses Ollama to classify whether each paragraph is mainly about geothermal energy.
+   Reads cleaned paragraphs directly and uses Ollama to classify whether each paragraph is mainly about geothermal energy, retaining the existing 20–499-word restriction.
 4. `scripts/core_workflow/locations_ollama.py`
-   Uses Ollama to extract the primary location discussed in each geothermal paragraph.
+   Keeps only paragraphs labelled `YES` and uses Ollama to extract the primary location discussed in each geothermal paragraph.
 5. `scripts/core_workflow/geocoding_offline.py`
    Matches the extracted paragraph location against `data/shapes.parquet` NUTS2/country shapes.
 6. `scripts/core_workflow/geocoding_online.py`
    Finalises paragraph geocoding offline: language-specific manual overrides, GeoNames country gazetteers, and any previously filled geocoder cache are applied to remaining unmatched locations. The step also writes unmatched-location and suggestion reports for review.
 7. `scripts/core_workflow/split_paragraphs_to_sentences.py`
-   Splits geocoded paragraphs into sentence-level rows while keeping paragraph context and paragraph-level location/geometry output.
+   Requires a nonempty point or polygon geometry, then splits each eligible paragraph into all its sentences while keeping paragraph context and location/geometry output.
 8. `scripts/core_workflow/classification_sentences.py`
-   Runs keyword-based frame matching on the sentence table and keeps only sentences with at least one matched frame.
+   Runs keyword-based frame matching on a separate reporting branch and keeps only sentences with at least one matched frame. This does not filter the sentiment input.
 9. `scripts/core_workflow/sentiment_classification.py`
-   Runs a local Ollama sentiment classifier on the frame-bearing sentences.
+   Reads the sentence splitter output directly and runs a local Ollama sentiment classifier on every sentence, including sentences without frame matches.
    Duplicate `sentence_text` values are cached locally to avoid repeated model calls.
 10. `scripts/core_workflow/classification_sentences.py`
    Builds the geocoded sentence-level frame outputs from inherited paragraph geometry and exports long/short tables plus a GeoPackage.
@@ -36,9 +36,11 @@ The current `Snakefile` runs the following pipeline:
 13. `scripts/core_workflow/make_annotation_df.py`
     Builds the sentence-level annotation CSV used by the Streamlit annotation app.
 
-In short, the current workflow is:
+The main sentiment and results path is:
 
-`RTF files -> cleaned paragraphs -> paragraph keyword filter -> geothermal paragraph classification -> paragraph location extraction -> shapes-parquet paragraph geocoding -> offline final geocoding -> sentence split with inherited geo fields -> sentence frame matching -> sentence sentiment -> sentence frame outputs -> NUTS2 aggregation -> figures + interactive map + annotation export`
+`RTF files -> cleaned paragraphs -> geothermal paragraph classification (20–499 words) -> YES paragraphs -> paragraph location extraction -> shapes-parquet paragraph geocoding -> offline final geocoding -> geometry filter -> sentence split with inherited geo fields -> sentence sentiment -> sentence frame outputs -> NUTS2 aggregation -> figures + interactive map + annotation export`
+
+Language-specific frame outputs, aggregation, visualisations, and annotation retain their existing behavior. Generic reporting uses all eligible sentence sentiments for regional balances.
 
 ## Main files
 
@@ -92,17 +94,16 @@ Running `snakemake` with no explicit target builds these outputs for every disco
 - `output/{language}/figures/locations_map.html`
 - `output/generic/text/all_languages_province_sentiment_table.csv`
 - `output/generic/figures/all_languages_province_sentiment_balance.png`
-- `output/generic/text/all_languages_frames_sentiment_table.csv`
-- `output/generic/figures/all_languages_frames_sentiment_distribution.png`
-- `output/generic/text/all_languages_frames_country_sentiment_balance_table.csv`
-- `output/generic/figures/all_languages_frames_country_sentiment_balance.png`
 - `output/generic/text/all_languages_extreme_province_frame_shares_table.csv`
-- `output/generic/text/all_languages_frames_extreme_region_sentiment_balance_table.csv`
-- `output/generic/figures/all_languages_frames_extreme_region_sentiment_balance.png`
 - `output/generic/text/frame_mentions_100pct_stacked_table.csv`
 - `output/generic/figures/frame_mentions_100pct_stacked.png`
-- `output/generic/figures/frame_mentions_100pct_stacked.pdf`
 - `output/generic/figures/all_languages_province_sentiment_map.png`
+
+Generic figure generation produces only the three PNGs listed above. All three use the same global selection: the three lowest and three highest regional sentiment balances (positive percentage minus negative percentage), across countries, excluding country averages and regions with fewer than 40 sentences. Ties prefer more sentences, then country, region, and language alphabetically. If fewer than six regions qualify, the two tails remain disjoint. The map and balance chart highlight these regions; the stacked figure shows their frame composition, grouped by low/high sentiment. Regions with no frame mentions remain selected and have an empty composition bar.
+
+Regional balances use all successfully classified eligible sentences, including sentences without frames. Frame composition uses matched frames only. Existing obsolete generic images are not deleted, but are no longer generated or required by the workflow.
+
+`output/generic/text/data_tracking.csv` has ten rows, each with counts and unique-document counts by language: documents extracted from files, unique cleaned documents, total paragraphs, paragraphs after the 20–499-word filter, geothermal `YES` paragraphs, paragraphs with geometry, total sentences, sentences with successful sentiment, sentences with frames, and sentences with both frames and successful sentiment. The last row matches sentence identifiers across the frame and sentiment tables. Counts describe saved intermediate files; rerun upstream stages to reflect changes to filtering.
 
 If `make_annotation_df: true`, it also builds:
 
@@ -276,8 +277,8 @@ annotation:
 
 ## Notes on outputs
 
-- The paragraph keyword filter is only an inclusion filter; frame labels are still assigned at sentence level.
-- The sentence-level frame filter is applied before sentiment, so only sentences with a matched frame are sent to the sentiment classifier.
+- The legacy paragraph keyword filter remains available as a standalone target; sentence frame matching supplies reporting counts. Neither gates sentiment.
+- Sentiment includes all sentences from `YES` geothermal paragraphs of 20–499 words with nonempty point or polygon geometry, regardless of frame matches.
 - Sentiment caching uses `sentence_text` together with the configured model and prompt variant to reduce repeated model calls.
 - The location output in `output/{language}/figures/locations_map.html` is interactive:
   hover shows the matched location and clicking a point reveals the associated text.
