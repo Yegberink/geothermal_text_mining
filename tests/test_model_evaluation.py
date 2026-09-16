@@ -1,10 +1,12 @@
 import json
+import io
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
+from contextlib import redirect_stdout
 
 import pandas as pd
 
@@ -12,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts/model_evaluation'))
 import evaluate
 import prepare
+import requests
 
 
 class EvaluationTests(unittest.TestCase):
@@ -64,6 +67,90 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(evaluate.ollama_predict('location', row, 'phi3', 'http://test')[0], 'none')
             self.assertEqual(call.call_args.args[0], 'Tekst.')
 
+    def test_thinking_setting_reaches_all_api_payloads(self):
+        from core_workflow import sentiment_classification, locations_ollama
+        row = pd.Series({'sentence_text': 'Zin.', 'paragraph_text': 'Tekst.', 'region_name': 'Netherlands'})
+        raw = {'sentiment': 'neutral', 'is_geothermal': 'NO', 'location': 'NONE',
+               'granularity': 'none', 'confidence': .9, 'reasoning_short': '', 'evidence_short': ''}
+        body = {'response': json.dumps(raw)}
+        for task in ['location', 'geothermal', 'sentiment']:
+            for think in [None, False]:
+                with self.subTest(task=task, think=think):
+                    with patch.object(locations_ollama.requests, 'post') as post, \
+                            patch.object(sentiment_classification.urllib.request, 'urlopen') as urlopen:
+                        post.return_value.json.return_value = body
+                        urlopen.return_value.__enter__.return_value.read.return_value = json.dumps(body).encode()
+                        prediction, confidence, _ = evaluate.ollama_predict(
+                            task, row, 'test', 'http://test/api/generate', think=think)
+                        self.assertNotEqual(prediction, evaluate.INVALID)
+                        self.assertEqual(confidence, .9)
+                        payload = (json.loads(urlopen.call_args.args[0].data) if task == 'sentiment'
+                                   else post.call_args.kwargs['json'])
+                        if think is None:
+                            self.assertNotIn('think', payload)
+                        else:
+                            self.assertIs(payload['think'], False)
+                        self.assertNotIn('think', payload['options'])
+
+    def test_missing_models_checked_before_inference(self):
+        configs = [{'model_id': name, 'backend': 'ollama'}
+                   for name in ['mistral', 'qwen3.5:9b']]
+        with patch.object(evaluate.requests, 'get') as get:
+            get.return_value.json.return_value = {'models': [{'name': 'mistral:latest'}]}
+            with self.assertRaisesRegex(ValueError, 'ollama pull qwen3.5:9b') as error:
+                evaluate.check_ollama_models(configs, 'http://test/prefix/api/generate')
+            self.assertNotIn('ollama pull mistral', str(error.exception))
+            get.assert_called_once_with('http://test/prefix/api/tags', timeout=10)
+            get.return_value.json.return_value['models'].append({'name': 'qwen3.5:9b'})
+            evaluate.check_ollama_models(configs, 'http://test/api/generate')
+            get.reset_mock()
+            evaluate.check_ollama_models([{'model_id': 'bert', 'backend': 'huggingface'}], 'http://test')
+            get.assert_not_called()
+            get.side_effect = requests.ConnectionError('connection refused')
+            with self.assertRaisesRegex(ValueError, 'Check that Ollama is running'):
+                evaluate.check_ollama_models(configs, 'http://test/api/generate')
+
+    def test_all_models_run_applicable_tasks_and_report_errors(self):
+        configs = json.loads((ROOT / 'scripts/model_evaluation/models.json').read_text())
+        self.assertEqual(len(configs), 20)
+        frames = {
+            'paragraph': pd.DataFrame([{'sample_id': 'p1', 'paragraph_text': 'Tekst.', 'region_name': '',
+                                        'document_id': 'doc1', 'body': 'Full article.'}]),
+            'sentence': pd.DataFrame([{'sample_id': 's1', 'sentence_text': 'Zin.'}]),
+        }
+        args = SimpleNamespace(tasks=['location', 'geothermal', 'sentiment'],
+                               device='cpu', ollama_url='http://test')
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(output), \
+                patch.object(evaluate, 'ollama_predict', return_value=('neutral', .9, {'location': 'Delft', 'granularity': 'city'})) as call, \
+                patch.object(evaluate, 'HuggingFaceRunner') as runner:
+            runner.return_value.return_value = ('neutral', .9, {})
+            results = evaluate.predict(frames, configs, Path(directory), args)
+            self.assertEqual(len(results), 9 * 3 + 11)
+            self.assertEqual(call.call_count, 27)
+            self.assertEqual(runner.call_count, 11)
+            self.assertEqual(set(results[results.backend.eq('huggingface')].task), {'sentiment'})
+            for invocation in call.call_args_list:
+                model = invocation.args[2]
+                if model in ['qwen3.5:9b', 'qwen3.5:4b', 'gemma4:12b']:
+                    self.assertIs(invocation.kwargs['think'], False)
+                else:
+                    self.assertIsNone(invocation.kwargs['think'])
+        self.assertIn('location starting', output.getvalue())
+        self.assertIn('sentiment 1/1', output.getvalue())
+
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(output), \
+                patch.object(evaluate, 'ollama_predict', side_effect=RuntimeError('test failure')) as call:
+            configs = [{'model_id': 'phi3', 'backend': 'ollama'}]
+            failed = evaluate.predict(frames, configs, Path(directory), args)
+            self.assertTrue(failed.error.str.contains('test failure').all())
+            self.assertIn('ERROR:', output.getvalue())
+            call.side_effect = None
+            call.return_value = ('neutral', .9, {'location': 'Delft', 'granularity': 'city'})
+            retried = evaluate.predict(frames, configs, Path(directory), args)
+            self.assertTrue(retried.error.eq('').all())
+            self.assertEqual(call.call_count, 6)
+
     def test_end_to_end_resume_and_integrity(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -84,20 +171,43 @@ class EvaluationTests(unittest.TestCase):
             frames = evaluate.load_annotations(path)
             args = SimpleNamespace(tasks=['sentiment'], device='cpu', ollama_url='http://test')
             configs = [{'model_id': 'phi3', 'backend': 'ollama'}]
-            with patch.object(evaluate, 'ollama_predict', return_value=('neutral', .9, {})) as call:
+            with patch.object(evaluate, 'ollama_predict', return_value=('neutral', .9, {'location': 'Delft', 'granularity': 'city'})) as call:
                 first = evaluate.predict(frames, configs, path, args)
                 second = evaluate.predict(frames, configs, path, args)
                 self.assertEqual(call.call_count, 2)
                 self.assertTrue(first.equals(second))
             evaluate.evaluate_predictions(second, frames, path, .8)
-            self.assertEqual(pd.read_csv(path / 'metrics.csv').iloc[0].accuracy, 1.)
+            self.assertEqual(pd.read_csv(path / 'metrics_detailed.csv').iloc[0].accuracy, 1.)
             frame = pd.read_csv(path / 'sentences.csv')
             frame.loc[0, 'sentence_text'] = 'Tampered text'
             frame.to_csv(path / 'sentences.csv', index=False)
             with self.assertRaisesRegex(ValueError, 'source text/metadata changed'):
                 evaluate.load_annotations(path)
 
-    def test_test_labels_do_not_change_threshold(self):
+    def test_main_scores_do_not_hide_low_confidence_errors(self):
+        predictions = pd.DataFrame(dict(
+            sample_id=list('abcde'), model=['test'] * 5, task=['sentiment'] * 5,
+            prediction=['positive', 'neutral', 'neutral', 'neutral', 'negative'],
+            confidence=[1., .5, .5, .5, .5], error=[''] * 5,
+            seconds=[2.] * 5, setup_seconds=[0.] * 5))
+        frame = pd.DataFrame(dict(sample_id=list('abcde'),
+            gold_sentiment=['positive', 'positive', 'negative', 'negative', 'neutral']))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            evaluate.evaluate_predictions(predictions, {'sentence': frame}, path, 0.)
+            summary = pd.read_csv(path / 'metrics.csv').iloc[0]
+            details = pd.read_csv(path / 'metrics_detailed.csv').iloc[0]
+            self.assertEqual(summary['sentiment (accuracy)'], .2)
+            self.assertAlmostEqual(summary['sentiment (f1)'], 2 / 9)
+            self.assertEqual(summary['sentiment (selective threshold)'], 1.)
+            self.assertEqual(summary['sentiment (selective coverage)'], .2)
+            self.assertEqual(summary.average_runtime_seconds, 2.)
+            self.assertEqual(details.accuracy, .2)
+            self.assertEqual(details.accepted_accuracy, 1.)
+            self.assertEqual(details.n_samples, 5)
+            self.assertEqual(details.n_accepted, 1)
+
+    def test_threshold_uses_all_labels_and_ignores_split(self):
         predictions = pd.DataFrame({'sample_id': ['a', 'b', 'c', 'd'], 'model': ['test'] * 4,
             'task': ['sentiment'] * 4, 'prediction': ['positive', 'negative', 'neutral', 'positive'],
             'confidence': [.9, .7, .9, .8], 'error': [''] * 4, 'seconds': [1.] * 4,
@@ -108,11 +218,11 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
             evaluate.evaluate_predictions(predictions, {'sentence': frame}, path, .5)
-            initial = pd.read_csv(path / 'metrics.csv').iloc[0]
+            initial = pd.read_csv(path / 'metrics_detailed.csv').iloc[0]
             frame.loc[frame.split.eq('test'), 'gold_sentiment'] = 'positive'
             evaluate.evaluate_predictions(predictions, {'sentence': frame}, path, .5)
-            revised = pd.read_csv(path / 'metrics.csv').iloc[0]
-            self.assertEqual(initial.threshold, revised.threshold)
+            revised = pd.read_csv(path / 'metrics_detailed.csv').iloc[0]
+            self.assertNotEqual(initial.threshold, revised.threshold)
             self.assertEqual(initial.runtime_seconds, 4.)
 
 

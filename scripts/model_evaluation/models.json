@@ -20,6 +20,25 @@
     "backend": "ollama"
   },
   {
+    "model_id": "qwen3.5:9b",
+    "backend": "ollama",
+    "think": false
+  },
+  {
+    "model_id": "ministral-3:14b",
+    "backend": "ollama"
+  },
+  {
+    "model_id": "gemma4:12b",
+    "backend": "ollama",
+    "think": false
+  },
+  {
+    "model_id": "qwen3.5:4b",
+    "backend": "ollama",
+    "think": false
+  },
+  {
     "model_id": "BramVanroy/bert-base-dutch-cased-hebban-reviews5",
     "backend": "huggingface",
     "label_names": {
@@ -61,7 +80,8 @@
       "3": "Positive",
       "4": "Very Positive"
     },
-    "revision": "80110ac9f250b8d73f74584dcd440d831952e52d"
+    "revision": "80110ac9f250b8d73f74584dcd440d831952e52d",
+    "use_safetensors": true
   },
   {
     "model_id": "oxygeneDev/sentiment-multilingual",
@@ -73,7 +93,8 @@
       "3": "Positive",
       "4": "Very Positive"
     },
-    "revision": "4753f01adbd7509b60f4e2eb8997368b8d32b55b"
+    "revision": "4753f01adbd7509b60f4e2eb8997368b8d32b55b",
+    "use_safetensors": true
   },
   {
     "model_id": "tabularisai/multilingual-sentiment-analysis",
@@ -85,7 +106,8 @@
       "3": "Positive",
       "4": "Very Positive"
     },
-    "revision": "eea032081f8d247b4303ef3565e7cec1b6f201c9"
+    "revision": "eea032081f8d247b4303ef3565e7cec1b6f201c9",
+    "use_safetensors": true
   },
   {
     "model_id": "BramVanroy/robbert-v2-dutch-base-hebban-reviews",
@@ -140,6 +162,8 @@
       "2": "neutral",
       "3": "positive"
     },
-    "revision": "71fba91e7e4dba37f68591799d17c143bd9ac1bc"
+    "revision": "71fba91e7e4dba37f68591799d17c143bd9ac1bc",
+    "use_safetensors": true,
+    "use_fast": false
   }
 ]

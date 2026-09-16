@@ -320,6 +320,7 @@ rule classify_geothermal:
     params:
         cache=lambda wildcards: path_for(wildcards.language, "geo_class_cache"),
         model=OLLAMA["geothermal_model"],
+        thinking="--think" if OLLAMA.get("think", False) else "--no-think",
         url=OLLAMA["url"],
         sleep_s=OLLAMA["sleep_s"],
         save_every=OLLAMA["save_every"],
@@ -335,6 +336,7 @@ rule classify_geothermal:
           --cache {params.cache} \
           --ollama-url {params.url} \
           --model {params.model} \
+          {params.thinking} \
           --country "{params.country}" \
           --countries {params.countries} \
           --language {params.language} \
@@ -351,6 +353,7 @@ rule extract_locations:
     params:
         cache=lambda wildcards: path_for(wildcards.language, "geo_cache"),
         model=OLLAMA["location_model"],
+        thinking="--think" if OLLAMA.get("think", False) else "--no-think",
         url=OLLAMA["url"],
         sleep_s=OLLAMA["sleep_s"],
         save_every=OLLAMA["save_every"],
@@ -365,6 +368,7 @@ rule extract_locations:
           --cache {params.cache} \
           --ollama-url {params.url} \
           --model {params.model} \
+          {params.thinking} \
           --country "{params.country}" \
           --countries {params.countries} \
           --sleep-s {params.sleep_s} \
@@ -574,7 +578,8 @@ rule classify_sentence_sentiment:
         pattern_for("sentence_sentiment_csv"),
     params:
         cache=lambda wildcards: path_for(wildcards.language, "sentence_sentiment_cache"),
-        model=config.get("sentiment_ollama", {}).get("model", "llama3.1:8b"),
+        model=config.get("sentiment_ollama", {}).get("model", "ministral-3:14b"),
+        thinking="--think" if config.get("sentiment_ollama", {}).get("think", False) else "--no-think",
         ollama_url=OLLAMA["url"],
         language=lambda wildcards: wildcards.language,
         prompt_variant=config.get("sentiment_ollama", {}).get("prompt_variant", "zero_shot"),
@@ -590,6 +595,7 @@ rule classify_sentence_sentiment:
           --text-col sentence_text \
           --cache {params.cache} \
           --model {params.model} \
+          {params.thinking} \
           --ollama-url {params.ollama_url} \
           --language {params.language} \
           --prompt-variant {params.prompt_variant} \

@@ -50,8 +50,10 @@ LOCATION_TRACKING_DEFAULTS = {
 }
 
 
-def _fingerprint(text: str, region: str, country: str) -> str:
+def _fingerprint(text: str, region: str, country: str, *, model: str = "", think: bool | None = None) -> str:
     h = hashlib.sha256()
+    h.update(json.dumps([model, think]).encode("utf-8"))
+    h.update(b"\n")
     h.update((region or "").encode("utf-8"))
     h.update(b"\n")
     h.update((country or "").encode("utf-8"))
@@ -60,8 +62,10 @@ def _fingerprint(text: str, region: str, country: str) -> str:
     return h.hexdigest()
 
 
-def _document_fingerprint(document_key: str, text: str, region: str, country: str) -> str:
+def _document_fingerprint(document_key: str, text: str, region: str, country: str, *, model: str = "", think: bool | None = None) -> str:
     h = hashlib.sha256()
+    h.update(json.dumps([model, think]).encode("utf-8"))
+    h.update(b"\n")
     h.update(b"document_location\n")
     h.update((document_key or "").encode("utf-8"))
     h.update(b"\n")
@@ -241,6 +245,8 @@ def llm_primary_location(
     country_scope: CountryScope,
     ollama_url: str,
     model: str,
+    *,
+    think: bool | None = None,
 ) -> dict:
     country_context = country_scope_prompt_context(country_scope)
     prompt = f"""
@@ -273,6 +279,8 @@ Paragraph:
         "options": {"temperature": 0.0, "num_predict": 200},
     }
 
+    if think is not None:
+        payload["think"] = think
     r = requests.post(ollama_url, json=payload, timeout=120)
     r.raise_for_status()
     out = (r.json().get("response") or "").strip()
@@ -291,6 +299,8 @@ def llm_document_primary_location(
     country_scope: CountryScope,
     ollama_url: str,
     model: str,
+    *,
+    think: bool | None = None,
 ) -> dict:
     country_context = country_scope_prompt_context(country_scope)
     prompt = f"""
@@ -323,6 +333,8 @@ Document:
         "options": {"temperature": 0.0, "num_predict": 200},
     }
 
+    if think is not None:
+        payload["think"] = think
     r = requests.post(ollama_url, json=payload, timeout=120)
     r.raise_for_status()
     out = (r.json().get("response") or "").strip()
@@ -653,6 +665,8 @@ def batch_primary_locations_resumable(
     ollama_url: str,
     model: str,
     country_scope: CountryScope,
+    *,
+    think: bool | None = None,
 ) -> pd.DataFrame:
     out = df.copy()
     out["llm_location"] = None
@@ -698,7 +712,7 @@ def batch_primary_locations_resumable(
                 "reasoning_short": "Empty document text.",
             }
 
-        key = _document_fingerprint(document_key, document_text, region_name, country_scope.cache_key)
+        key = _document_fingerprint(document_key, document_text, region_name, country_scope.cache_key, model=model, think=think)
         cached = cache_get(key)
         if cached is not None:
             return cached
@@ -709,6 +723,7 @@ def batch_primary_locations_resumable(
             country_scope=country_scope,
             ollama_url=ollama_url,
             model=model,
+            think=think,
         )
         cache_put(key, res)
         if sleep_s:
@@ -751,7 +766,7 @@ def batch_primary_locations_resumable(
                 out.at[i, "llm_paragraph_returned_none"] = None
                 continue
 
-            key = _fingerprint(text, region_name, country_scope.cache_key)
+            key = _fingerprint(text, region_name, country_scope.cache_key, model=model, think=think)
             cached = cache_get(key)
 
             try:
@@ -761,6 +776,7 @@ def batch_primary_locations_resumable(
                     country_scope=country_scope,
                     ollama_url=ollama_url,
                     model=model,
+                    think=think,
                 )
                 if cached is None:
                     cache_put(key, res)
@@ -827,7 +843,9 @@ def main():
     ap.add_argument("--sleep-s", type=float, default=0.0)
 
     ap.add_argument("--ollama-url", type=str, default="http://localhost:11434/api/generate")
-    ap.add_argument("--model", type=str, default="llama3.1:8b")
+    ap.add_argument("--model", type=str, default="ministral-3:14b")
+    ap.add_argument("--think", action=argparse.BooleanOptionalAction, default=False,
+                    help="Enable Ollama thinking (disabled by default).")
     ap.add_argument("--country", type=str, default="Nederland", help="Backward-compatible single-country shorthand.")
     ap.add_argument("--countries", nargs="+", default=None, help="Canonical country scope, e.g. Germany Austria Switzerland.")
     ap.add_argument("--country-scope", type=str, default="", help="Comma-separated country scope shorthand.")
@@ -858,6 +876,7 @@ def main():
         cache_path=cache_path,
         sleep_s=args.sleep_s,
         ollama_url=args.ollama_url,
+        think=args.think,
         model=args.model,
         country_scope=country_scope,
     )

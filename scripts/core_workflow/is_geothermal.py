@@ -110,8 +110,13 @@ def _fingerprint(
     country: str,
     language: str,
     geothermal_lexicon: Mapping[str, Sequence[str]],
+    *,
+    model: str = "",
+    think: bool | None = None,
 ) -> str:
     h = hashlib.sha256()
+    h.update(json.dumps([model, think]).encode("utf-8"))
+    h.update(b"\n")
     h.update((country or "").encode("utf-8"))
     h.update(b"\n")
     h.update((language or "").encode("utf-8"))
@@ -169,6 +174,8 @@ def llm_is_geothermal(
     model: str,
     language: str,
     geothermal_lexicon: Mapping[str, Sequence[str]],
+    *,
+    think: bool | None = None,
 ) -> dict:
     strong_terms = _format_terms(geothermal_lexicon.get("strong", ()))
     contextual_terms = _format_terms(geothermal_lexicon.get("contextual", ()))
@@ -215,6 +222,8 @@ Paragraph:
         "options": {"temperature": 0.0, "num_predict": 120},
     }
 
+    if think is not None:
+        payload["think"] = think
     r = requests.post(ollama_url, json=payload, timeout=120)
     r.raise_for_status()
     out = (r.json().get("response") or "").strip()
@@ -299,6 +308,8 @@ def batch_geothermal_resumable(
     country: str,
     language: str,
     geothermal_lexicon: Mapping[str, Sequence[str]],
+    *,
+    think: bool | None = None,
 ) -> pd.DataFrame:
     out = df.copy()
     out["llm_is_geothermal"] = None
@@ -352,7 +363,7 @@ def batch_geothermal_resumable(
                 out.at[i, "llm_error"] = None
                 continue
 
-            key = _fingerprint(text, country, language, geothermal_lexicon)
+            key = _fingerprint(text, country, language, geothermal_lexicon, model=model, think=think)
             cached = cache_get(key)
 
             try:
@@ -362,7 +373,8 @@ def batch_geothermal_resumable(
                     ollama_url=ollama_url,
                     model=model,
                     language=language,
-                    geothermal_lexicon=geothermal_lexicon
+                    geothermal_lexicon=geothermal_lexicon,
+                    think=think,
                 )
                 if cached is None:
                     cache_put(key, res)
@@ -408,7 +420,9 @@ def main():
     ap.add_argument("--sleep-s", type=float, default=0.0)
 
     ap.add_argument("--ollama-url", type=str, default="http://localhost:11434/api/generate")
-    ap.add_argument("--model", type=str, default="llama3.1:8b")
+    ap.add_argument("--model", type=str, default="ministral-3:14b")
+    ap.add_argument("--think", action=argparse.BooleanOptionalAction, default=False,
+                    help="Enable Ollama thinking (disabled by default).")
     ap.add_argument("--country", type=str, default="Nederland", help="Backward-compatible single-country shorthand.")
     ap.add_argument("--countries", nargs="+", default=None)
     ap.add_argument("--country-scope", type=str, default="")
@@ -448,6 +462,7 @@ def main():
         cache_path=cache_path,
         sleep_s=args.sleep_s,
         ollama_url=args.ollama_url,
+        think=args.think,
         model=args.model,
         country=country_scope.label,
         language=args.language,

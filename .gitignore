@@ -49,4 +49,9 @@ annotation/final/*
 !annotation/final/prepare_annotation.ipynb
 !annotation/final/app.py
 !annotation/final/annotation_store.py
+!annotation/final/split_work.py
 !annotation/final/README.md
+!annotation/final/georeference_app.py
+!annotation/final/georeference_store.py
+!annotation/final/georeference_search.py
+!annotation/final/osm_component/

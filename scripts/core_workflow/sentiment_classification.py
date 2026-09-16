@@ -18,7 +18,7 @@ from tqdm.auto import tqdm
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_OLLAMA_URL = "http://localhost:11434/api/generate"
-DEFAULT_MODEL = "llama3.1:8b"
+DEFAULT_MODEL = "ministral-3:14b"
 DEFAULT_LANGUAGE = "dutch"
 DEFAULT_PROMPT_VARIANT = "zero_shot"
 ROW_UID_COL = "_row_uid"
@@ -36,6 +36,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--output-csv", type=str, default="output/workflow/sentence_sentiment_llm.csv")
     ap.add_argument("--cache", type=str, default="cache/sentiment_classification.jsonl")
     ap.add_argument("--model", type=str, default=DEFAULT_MODEL)
+    ap.add_argument("--think", action=argparse.BooleanOptionalAction, default=False,
+                    help="Enable Ollama thinking (disabled by default).")
     ap.add_argument("--ollama-url", type=str, default=DEFAULT_OLLAMA_URL)
     ap.add_argument("--text-col", type=str, default="sentence_text")
     ap.add_argument("--language", type=str, default=DEFAULT_LANGUAGE)
@@ -87,8 +89,10 @@ def set_unique_row_index(df: pd.DataFrame, uid_col: str = "sentence_uid") -> pd.
     return out.set_index(ROW_UID_COL, drop=True)
 
 
-def _fingerprint(text: str, model_name: str, prompt_variant: str, language: str) -> str:
+def _fingerprint(text: str, model_name: str, prompt_variant: str, language: str, *, think: bool | None = None) -> str:
     h = hashlib.sha256()
+    h.update(json.dumps(think).encode("utf-8"))
+    h.update(b"\n")
     h.update((model_name or "").encode("utf-8"))
     h.update(b"\n")
     h.update((prompt_variant or "").encode("utf-8"))
@@ -243,6 +247,8 @@ def call_ollama_sentiment(
     language: str,
     prompt_variant: str,
     timeout: int,
+    *,
+    think: bool | None = None,
 ) -> dict[str, object]:
     payload = {
         "model": model_name,
@@ -251,6 +257,8 @@ def call_ollama_sentiment(
         "stream": False,
         "options": {"temperature": 0.0, "num_predict": 120},
     }
+    if think is not None:
+        payload["think"] = think
     request = urllib.request.Request(
         ollama_url,
         data=json.dumps(payload).encode("utf-8"),
@@ -285,6 +293,8 @@ def batch_sentiment_resumable(
     prompt_variant: str,
     timeout: int,
     sleep_s: float,
+    *,
+    think: bool | None = None,
 ) -> pd.DataFrame:
     out = df.copy()
     out["sentiment"] = None
@@ -337,7 +347,7 @@ def batch_sentiment_resumable(
                 pbar.update(1)
                 continue
 
-            key = _fingerprint(text, model_name=model_name, prompt_variant=prompt_variant, language=language)
+            key = _fingerprint(text, model_name=model_name, prompt_variant=prompt_variant, language=language, think=think)
             cached = cache_get(key)
             try:
                 result = cached if cached is not None else call_ollama_sentiment(
@@ -347,6 +357,7 @@ def batch_sentiment_resumable(
                     language=language,
                     prompt_variant=prompt_variant,
                     timeout=timeout,
+                    think=think,
                 )
                 if cached is None:
                     cache_put(key, result)
@@ -435,6 +446,7 @@ def main() -> None:
         cache_path=cache_path,
         model_name=args.model,
         ollama_url=args.ollama_url,
+        think=args.think,
         language=args.language,
         prompt_variant=args.prompt_variant,
         timeout=args.timeout,

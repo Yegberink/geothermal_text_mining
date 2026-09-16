@@ -122,13 +122,23 @@ The current workflow uses Ollama for:
 - paragraph-level primary location extraction
 - sentence-level sentiment classification
 
-Paragraph-level models are configured in `config/config.yaml` under `ollama`.
+All three tasks use `ministral-3:14b`. Paragraph models are configured in
+`config/config.yaml` under `ollama`; sentiment is configured under
+`sentiment_ollama` and uses the zero-shot prompt. Both sections set `think: false`.
+The scripts also default to `ministral-3:14b` with thinking disabled;
+`--think` / `--no-think` override this when run directly.
 
-Sentence-level sentiment is currently handled by:
+Install the model on the local Ollama server before running the workflow:
 
-- `llama3.1:8b`
+```sh
+ollama pull ministral-3:14b
+```
 
-using a zero-shot prompt. This is configured in `config/config.yaml` under `sentiment_ollama`.
+Inference caches include the model and thinking setting, including document
+location fallback calls. Existing cache files are retained, but older entries
+without these settings are not reused. The next normal Snakemake run detects
+the changed model parameters and rebuilds the affected outputs and downstream
+results. The evaluation's confidence thresholds are not applied automatically.
 
 ## Geographic scope
 

@@ -26,13 +26,15 @@ annotation:
 
 ollama:
   url: http://localhost:11434/api/generate
-  location_model: llama3.1:8b
-  geothermal_model: llama3.1:8b
+  location_model: ministral-3:14b
+  geothermal_model: ministral-3:14b
+  think: false
   save_every: 25
   sleep_s: 0.0
 
 sentiment_ollama:
-  model: llama3.1:8b
+  model: ministral-3:14b
+  think: false
   prompt_variant: zero_shot
   timeout: 120
   sleep_s: 0.0

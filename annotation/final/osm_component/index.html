@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+ integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+ integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>body{margin:0;font:14px sans-serif}#map{height:470px}#help{padding:8px}</style>
+</head><body><div id="map" aria-label="Click to select the manually annotated location"></div>
+<div id="help">Click the map or drag the marker, then save your judgment below.</div>
+<script>
+const send = (type, payload={}) => parent.postMessage({isStreamlitMessage:true,type,...payload}, '*');
+let map, marker, boundaries, identity, focus, latestPick;
+function mark(lat, lon) {
+  if (marker) marker.setLatLng([lat,lon]);
+  else {
+    marker = L.marker([lat,lon], {draggable:true}).addTo(map);
+    marker.on('dragend', () => pick(marker.getLatLng()));
+  }
+}
+function pick(point) {
+  const lon = ((point.lng + 180) % 360 + 360) % 360 - 180;
+  mark(point.lat, lon);
+  latestPick = Date.now();
+  send('streamlit:setComponentValue', {dataType:'json',value:{
+    latitude:point.lat,longitude:lon,event:latestPick,identity}});
+}
+window.addEventListener('message', event => {
+  if (event.source !== parent || event.data.type !== 'streamlit:render') return;
+  const args = event.data.args;
+  if (!window.L) {
+    document.getElementById('help').textContent = 'Map could not load. Check your internet connection, or enter coordinates below.';
+    return;
+  }
+  if (!map) {
+    map = L.map('map').setView([52.1,5.3],7);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom:19, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap contributors</a>'
+    }).addTo(map);
+    map.on('click', event => pick(event.latlng));
+    boundaries = L.geoJSON(args.regions, {style:{color:'#496ea4',weight:1,fillOpacity:0.03},
+      onEachFeature: (feature, layer) => {
+        const label = document.createElement('span');
+        label.textContent = feature.properties.parent_name;
+        layer.bindTooltip(label);
+      }}).addTo(map);
+  }
+  const changed = identity !== args.identity;
+  identity = args.identity;
+  if (changed) latestPick = null;
+  // A click triggers a render with the previous Python coordinates first.
+  // Keep the new marker until Python has acknowledged that click.
+  const acknowledged = !latestPick || args.selection_event === latestPick;
+  if (acknowledged && args.latitude !== null && args.longitude !== null) {
+    mark(args.latitude,args.longitude);
+    if (changed || focus !== args.focus || !map.getBounds().contains(marker.getLatLng())) map.setView(marker.getLatLng(),12);
+  } else if (changed) {
+    if (marker) {map.removeLayer(marker);marker = null;}
+    map.setView([52.1,5.3],7);
+  }
+  focus = args.focus;
+  map.invalidateSize();
+});
+send('streamlit:componentReady', {apiVersion:1});
+send('streamlit:setFrameHeight', {height:510});
+</script></body></html>
