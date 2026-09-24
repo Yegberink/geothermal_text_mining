@@ -212,6 +212,9 @@ PER_LANGUAGE_TARGET_KEYS = [
 DATA_TRACKING_CSV = PATHS.get("data_tracking_csv", "output/generic/text/data_tracking.csv")
 
 OVERARCHING_TARGETS = [
+    "output/generic/figures/all_languages_extreme_province_sentiment_balance.png",
+    "output/generic/figures/keywords_frames_regions.png",
+    "output/generic/text/keywords_frames_regions_table.csv",
     "output/generic/figures/all_languages_province_sentiment_balance.png",
     "output/generic/text/all_languages_province_sentiment_table.csv",
     "output/generic/text/all_languages_extreme_province_frame_shares_table.csv",
@@ -719,11 +722,15 @@ rule visualize_absa_results:
 
 rule visualize_overarching_results:
     input:
+        keywords_csvs=expand(pattern_for("keywords_topics_csv"), language=LANGUAGES),
         admin_csvs=expand(pattern_for("sentences_with_categories_admin_csv"), language=LANGUAGES),
         sentiment_csvs=expand(pattern_for("sentence_sentiment_csv"), language=LANGUAGES),
         shapes=PATHS["shapes_parquet"],
         script=str(PROJECT_DIR / "scripts" / "results_tracking" / "visualize_overarching_results.py"),
     output:
+        extreme_balance="output/generic/figures/all_languages_extreme_province_sentiment_balance.png",
+        region_keywords="output/generic/figures/keywords_frames_regions.png",
+        region_keywords_table="output/generic/text/keywords_frames_regions_table.csv",
         balance="output/generic/figures/all_languages_province_sentiment_balance.png",
         province_table="output/generic/text/all_languages_province_sentiment_table.csv",
         extreme_province_frame_shares_table="output/generic/text/all_languages_extreme_province_frame_shares_table.csv",

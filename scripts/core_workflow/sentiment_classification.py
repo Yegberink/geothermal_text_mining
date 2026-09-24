@@ -259,28 +259,45 @@ def call_ollama_sentiment(
     }
     if think is not None:
         payload["think"] = think
-    request = urllib.request.Request(
-        ollama_url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        if exc.code == 404 and "not found" in detail.lower():
-            raise RuntimeError(
-                f"Ollama model '{model_name}' was not found at {ollama_url}. "
-                f"Pull it first with: ollama pull {model_name}"
-            ) from exc
-        raise RuntimeError(f"Ollama HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach Ollama at {ollama_url}: {exc.reason}") from exc
+    for attempt in range(2):
+        request = urllib.request.Request(
+            ollama_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 404 and "not found" in detail.lower():
+                raise RuntimeError(
+                    f"Ollama model '{model_name}' was not found at {ollama_url}. "
+                    f"Pull it first with: ollama pull {model_name}"
+                ) from exc
+            raise RuntimeError(f"Ollama HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Could not reach Ollama at {ollama_url}: {exc.reason}") from exc
 
-    raw_response = str(body.get("response", "") or "").strip()
-    return parse_ollama_sentiment_response(raw_response)
+        raw_response = str(body.get("response", "") or "").strip()
+        try:
+            return parse_ollama_sentiment_response(raw_response)
+        except ValueError:
+            if attempt == 1:
+                raise
+            # Preserve the usual request and existing cache; constrain only a
+            # retry after the model returned an unusable response.
+            payload["format"] = {
+                "type": "object",
+                "properties": {
+                    "sentiment": {"type": "string", "enum": SENTIMENTS},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "rationale_short": {"type": "string"},
+                },
+                "required": ["sentiment", "confidence", "rationale_short"],
+                "additionalProperties": False,
+            }
 
 
 def batch_sentiment_resumable(
@@ -370,6 +387,7 @@ def batch_sentiment_resumable(
             except Exception as exc:
                 out.at[i, "sentiment_status"] = "error"
                 out.at[i, "sentiment_error"] = repr(exc)
+                pbar.write(f"Sentence sentiment failed for row {i}: {exc!r}")
 
             pbar.update(1)
             if sleep_s:

@@ -15,6 +15,46 @@ from helpers.country_scope import CountryScope
 
 
 class WorkflowOllamaTests(unittest.TestCase):
+    def test_sentiment_parse_failure_retries_with_schema_and_resumes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kwargs = dict(
+                df=pd.DataFrame({"sentence_text": ["1."]}),
+                text_col="sentence_text", cache_path=Path(directory) / "cache.jsonl",
+                model_name="ministral-3:14b", ollama_url="http://test/api/generate",
+                language="dutch", prompt_variant="zero_shot", timeout=120,
+                sleep_s=0, think=False,
+            )
+            with patch.object(sentiment_classification.urllib.request, "urlopen") as request:
+                request.return_value.__enter__.return_value.read.side_effect = [
+                    json.dumps({"response": '{"error": "No sentence provided."}'}).encode(),
+                    json.dumps({"response": json.dumps(dict(
+                        sentiment="neutral", confidence=0.9, rationale_short="A number."
+                    ))}).encode(),
+                ]
+                result = sentiment_classification.batch_sentiment_resumable(**kwargs)
+                self.assertEqual(result.loc[0, "sentiment_status"], "ok")
+                self.assertEqual(result.loc[0, "sentiment"], "neutral")
+                self.assertEqual(request.call_count, 2)
+                first, retry = [json.loads(c.args[0].data) for c in request.call_args_list]
+                self.assertNotIn("format", first)
+                self.assertEqual(retry["format"]["properties"]["sentiment"]["enum"],
+                                 sentiment_classification.SENTIMENTS)
+                self.assertEqual(retry["prompt"], first["prompt"])
+                sentiment_classification.batch_sentiment_resumable(**kwargs)
+                self.assertEqual(request.call_count, 2)
+
+    def test_sentiment_parse_retry_is_bounded(self):
+        with patch.object(sentiment_classification.urllib.request, "urlopen") as request:
+            request.return_value.__enter__.return_value.read.return_value = json.dumps(
+                {"response": '{"error": "No sentence provided."}'}
+            ).encode()
+            with self.assertRaisesRegex(ValueError, "parseable sentiment"):
+                sentiment_classification.call_ollama_sentiment(
+                    "1.", "ministral-3:14b", "http://test/api/generate",
+                    "dutch", "zero_shot", 120, think=False,
+                )
+            self.assertEqual(request.call_count, 2)
+
     def test_batch_requests_and_cache_isolation(self):
         """Resume identical settings, but rerun after a model or thinking change."""
         raw = dict(is_geothermal="YES", sentiment="positive", location="NONE",
