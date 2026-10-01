@@ -9,7 +9,7 @@ from pathlib import Path
 import geopandas as gpd
 
 from helpers.country_scope import country_name_for_id, country_scope_from_args
-from helpers.shape_resources import load_shapes_parquet, nuts2_shapes
+from helpers.shape_resources import load_shapes_parquet, regional_shapes, region_level, set_region_fields
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 
@@ -30,14 +30,14 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def assign_nuts2(text_gdf: gpd.GeoDataFrame, nuts2: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+def assign_regions(text_gdf: gpd.GeoDataFrame, regions: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     text_gdf = text_gdf.loc[:, ~text_gdf.columns.duplicated()].copy()
     if text_gdf.crs is None:
         raise ValueError("Input geometries have no CRS.")
-    if nuts2.crs is None:
-        raise ValueError("NUTS2 geometries have no CRS.")
-    if nuts2.crs != text_gdf.crs:
-        nuts2 = nuts2.to_crs(text_gdf.crs)
+    if regions.crs is None:
+        raise ValueError("Region geometries have no CRS.")
+    if regions.crs != text_gdf.crs:
+        regions = regions.to_crs(text_gdf.crs)
 
     country_rows = text_gdf["geo_level"].astype(str).str.lower().eq("country")
     if country_rows.any():
@@ -46,34 +46,43 @@ def assign_nuts2(text_gdf: gpd.GeoDataFrame, nuts2: gpd.GeoDataFrame) -> gpd.Geo
         country_names = country_names.where(country_names.notna() & country_names.astype(str).str.strip().ne(""), fallback_names)
         country_names = country_names.where(country_names.notna() & country_names.astype(str).str.strip().ne(""), text_gdf.loc[country_rows, "geo_name_matched"])
         text_gdf.loc[country_rows, "country_name"] = country_names.values
-        for col in ["province_name", "province_code", "nuts2_id", "nuts2_name"]:
+        for col in ["province_name", "province_code", "nuts2_id", "nuts2_name", "nuts3_id", "nuts3_name"]:
             if col in text_gdf.columns:
                 text_gdf.loc[country_rows, col] = None
         text_gdf.loc[country_rows, "admin_level"] = "country"
 
+    # A NUTS2 polygon/centroid cannot identify an Italian NUTS3 province.
+    coarse_italy = text_gdf["geo_level"].astype(str).str.lower().eq("nuts2") & text_gdf["country_id"].eq("ITA")
+    for col in ["province_name", "province_code", "nuts3_id", "nuts3_name"]:
+        if col in text_gdf.columns:
+            text_gdf.loc[coarse_italy, col] = None
+    text_gdf.loc[coarse_italy, "admin_level"] = "nuts2"
+
     non_country = text_gdf["geo_level"].astype(str).str.lower().ne("country")
-    eligible = non_country & text_gdf.geometry.notna()
-    if not eligible.any() or nuts2.empty:
+    eligible = non_country & ~coarse_italy & text_gdf.geometry.notna()
+    if not eligible.any() or regions.empty:
         return text_gdf
 
     reps = text_gdf.loc[eligible, ["geometry"]].copy()
     reps["geometry"] = reps.geometry.representative_point()
     reps = gpd.GeoDataFrame(reps, geometry="geometry", crs=text_gdf.crs)
 
-    keep = ["country_id", "parent_id", "parent_name", "geometry"]
-    joined = gpd.sjoin(reps, nuts2[keep], how="left", predicate="within")
+    keep = ["country_id", "parent_id", "parent_name", "parent_subtype", "geometry"]
+    joined = gpd.sjoin(reps, regions[keep], how="left", predicate="within")
     joined = joined.drop(columns=["index_right"], errors="ignore")
     matched = joined["parent_id"].notna()
     if matched.any():
         idx = joined.loc[matched].index
         text_gdf.loc[idx, "country_id"] = joined.loc[matched, "country_id"].values
         text_gdf.loc[idx, "country_name"] = joined.loc[matched, "country_id"].map(country_name_for_id).values
-        text_gdf.loc[idx, "nuts2_id"] = joined.loc[matched, "parent_id"].values
-        text_gdf.loc[idx, "nuts2_name"] = joined.loc[matched, "parent_name"].values
-        text_gdf.loc[idx, "province_code"] = joined.loc[matched, "parent_id"].values
-        text_gdf.loc[idx, "province_name"] = joined.loc[matched, "parent_name"].values
-        text_gdf.loc[idx, "admin_level"] = "nuts2"
+        for row_idx, row in joined.loc[matched].iterrows():
+            set_region_fields(text_gdf, row_idx, row)
+            text_gdf.at[row_idx, "admin_level"] = region_level(row)
     return text_gdf
+
+
+# Backward-compatible entry point for the Dutch evaluation workflow.
+assign_nuts2 = assign_regions
 
 
 def main() -> None:
@@ -92,8 +101,8 @@ def main() -> None:
         countries=args.countries,
         country_scope=args.country_scope,
     )
-    nuts2 = nuts2_shapes(shapes, country_scope.label).to_crs(text_gdf.crs)
-    text_gdf = assign_nuts2(text_gdf, nuts2)
+    regions = regional_shapes(shapes, country_scope.label).to_crs(text_gdf.crs)
+    text_gdf = assign_regions(text_gdf, regions)
 
     Path(args.output_gpkg).parent.mkdir(parents=True, exist_ok=True)
     text_gdf.to_file(args.output_gpkg, layer=args.output_layer, driver="GPKG")

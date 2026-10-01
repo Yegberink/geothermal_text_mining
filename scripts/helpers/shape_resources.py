@@ -31,8 +31,16 @@ def normalize_key(value: object) -> str:
     return text.strip()
 
 
+def shape_resource_paths(path: str | Path) -> list[Path]:
+    """Include a sibling Italian supplement without changing the base file."""
+    path = Path(path)
+    supplement = path.with_name(f"{path.stem}_italian_nuts3.parquet")
+    return [path, supplement] if supplement.exists() else [path]
+
+
 def load_shapes_parquet(path: str | Path) -> gpd.GeoDataFrame:
-    df = pd.read_parquet(path)
+    frames = [pd.read_parquet(resource) for resource in shape_resource_paths(path)]
+    df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
     if "geometry" not in df.columns:
         raise ValueError(f"Shape parquet is missing a geometry column: {path}")
 
@@ -79,10 +87,17 @@ def country_alias_lookup(country: str | None) -> dict[str, str]:
 
 
 def nuts2_shapes(shapes: gpd.GeoDataFrame, country: str | None = None) -> gpd.GeoDataFrame:
+    return nuts_shapes(shapes, country, level=2)
+
+
+def nuts_shapes(shapes: gpd.GeoDataFrame, country: str | None = None, level: int | None = None) -> gpd.GeoDataFrame:
+    """Select NUTS3 for Italy and NUTS2 elsewhere, or an explicit level."""
+    levels = pd.to_numeric(shapes["parent_subtype"], errors="coerce")
+    wanted = shapes["country_id"].map(lambda value: 3 if value == "ITA" else 2) if level is None else level
     gdf = shapes[
         shapes["shape_class"].astype(str).str.lower().eq("land")
         & shapes["parent"].astype(str).str.lower().eq("nuts")
-        & shapes["parent_subtype"].astype(str).eq("2")
+        & levels.eq(wanted)
     ].copy()
     country_ids = country_ids_for(country)
     if country_ids:
@@ -92,8 +107,32 @@ def nuts2_shapes(shapes: gpd.GeoDataFrame, country: str | None = None) -> gpd.Ge
     return gdf.to_crs("EPSG:4326")
 
 
+def regional_shapes(shapes: gpd.GeoDataFrame, country: str | None = None) -> gpd.GeoDataFrame:
+    """Workflow aggregation boundaries; never silently fall back to Italian NUTS2."""
+    regions = nuts_shapes(shapes, country)
+    scope = country_ids_for(country)
+    if (not scope or "ITA" in scope) and shapes["country_id"].eq("ITA").any():
+        if not regions["country_id"].eq("ITA").any():
+            raise ValueError("Italian NUTS3 boundaries are missing from the shapes parquet.")
+    return regions
+
+
+def region_level(row: pd.Series) -> str:
+    return f"nuts{int(row['parent_subtype'])}"
+
+
+def set_region_fields(df: pd.DataFrame, idx, row: pd.Series) -> None:
+    """Write level-specific IDs without labelling NUTS3 codes as NUTS2."""
+    level = region_level(row)
+    for candidate in ("nuts2", "nuts3"):
+        df.at[idx, f"{candidate}_id"] = row.get("parent_id") if candidate == level else None
+        df.at[idx, f"{candidate}_name"] = row.get("parent_name") if candidate == level else None
+    df.at[idx, "province_code"] = row.get("parent_id")
+    df.at[idx, "province_name"] = row.get("parent_name")
+
+
 def country_shapes(shapes: gpd.GeoDataFrame, country: str | None = None) -> gpd.GeoDataFrame:
-    nuts = nuts2_shapes(shapes, country)
+    nuts = regional_shapes(shapes, country)
     if nuts.empty:
         return gpd.GeoDataFrame(
             columns=["country_id", "parent_id", "parent_name", "geometry", "_name_norm", "_id_norm"],

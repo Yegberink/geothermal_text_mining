@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 
 from helpers.country_scope import country_scope_from_args, single_country_from_row
 from helpers.language_resources import load_keyword_csv, load_location_province_overrides
-from helpers.shape_resources import load_shapes_parquet, normalize_key, nuts2_shapes
+from helpers.shape_resources import load_shapes_parquet, normalize_key, regional_shapes
 from helpers.visual_constants import SENTIMENT_COLORS, SENTIMENT_ORDER
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
@@ -133,7 +133,7 @@ def province_row_mask(df: pd.DataFrame) -> pd.Series:
 
     has_province = df["province_name"].notna() & df["province_name"].astype(str).str.strip().ne("")
     if "admin_level" in df.columns:
-        return has_province & df["admin_level"].astype(str).str.strip().str.lower().eq("nuts2")
+        return has_province & df["admin_level"].astype(str).str.strip().str.lower().isin(["nuts2", "nuts3"])
 
     province_key = df["province_name"].fillna("").map(normalize_key)
     country = df["_single_country"] if "_single_country" in df.columns else pd.Series("", index=df.index, dtype=object)
@@ -262,7 +262,9 @@ def build_province_summary(
     grouped["pct_neu"] = 100 * grouped["n_neu"] / denom
     grouped["pct_pos"] = 100 * grouped["n_pos"] / denom
     grouped["polarity_balance"] = grouped["pct_pos"] - grouped["pct_neg"]
-    grouped["aggregation_level"] = "nuts2"
+    grouped["aggregation_level"] = grouped["province_name"].map(
+        df.drop_duplicates("province_name").set_index("province_name")["admin_level"]
+    ) if "admin_level" in df.columns else "nuts2"
     grouped = grouped[grouped["n_text_units"] >= MIN_PROVINCE_SENTENCES].copy()
     grouped = grouped.sort_values(["n_text_units", "province_name"], ascending=[False, True]).reset_index(drop=True)
     return pd.concat([overall, country_grouped, grouped], ignore_index=True, sort=False)
@@ -503,7 +505,7 @@ def build_region_frame_counts(
     eligible_provinces = set(
         province_tbl.loc[
             (
-                province_tbl["aggregation_level"].astype(str).eq("nuts2")
+                province_tbl["aggregation_level"].astype(str).isin(["nuts2", "nuts3"])
                 if "aggregation_level" in province_tbl.columns
                 else province_tbl["province_name"].astype(str).ne("All sentences")
             ),
@@ -541,7 +543,7 @@ def eligible_province_summary(province_tbl: pd.DataFrame) -> pd.DataFrame:
         & province_tbl["province_name"].astype(str).ne("All sentences")
     ].copy()
     if "aggregation_level" in eligible.columns:
-        eligible = eligible[eligible["aggregation_level"].astype(str).eq("nuts2")].copy()
+        eligible = eligible[eligible["aggregation_level"].astype(str).isin(["nuts2", "nuts3"])].copy()
     return eligible
 
 
@@ -651,7 +653,7 @@ def plot_region_sentiment_extreme_frame_comparison(
 
 def most_negative_positive_provinces(province_summary: pd.DataFrame) -> list[str]:
     if "aggregation_level" in province_summary.columns:
-        province_summary = province_summary[province_summary["aggregation_level"].astype(str).eq("nuts2")].copy()
+        province_summary = province_summary[province_summary["aggregation_level"].astype(str).isin(["nuts2", "nuts3"])].copy()
     if province_summary.empty or province_summary["province_name"].nunique() < 2:
         return []
 
@@ -1056,7 +1058,7 @@ def plot_locations_interactive(
     points_df["frame_display"] = points_df.get("matched_categories_str", pd.Series(index=points_df.index, dtype=object)).fillna("").astype(str)
 
     shapes = load_shapes_parquet(shapes_parquet)
-    regions = nuts2_shapes(shapes, country)
+    regions = regional_shapes(shapes, country)
     regions = regions.reset_index(drop=True).copy()
     region_scores = points_df.copy()
     region_scores["_sent"] = normalize_sentiment(region_scores["sentiment"]) if "sentiment" in region_scores.columns else ""
@@ -1101,7 +1103,7 @@ def plot_locations_interactive(
             featureidkey="properties._feature_id",
             locations=regions["_feature_id"],
             z=regions["polarity_balance"],
-            customdata=regions[["parent_name", "parent_id", "n_total"]].values,
+            customdata=regions[["parent_name", "parent_id", "n_total", "parent_subtype"]].values,
             colorscale=[[0.0, SENTIMENT_COLORS["negative"]], [0.5, "#F5F5F5"], [1.0, SENTIMENT_COLORS["positive"]]],
             zmid=0,
             showscale=True,
@@ -1109,11 +1111,11 @@ def plot_locations_interactive(
             marker_line_width=0.7,
             hovertemplate=(
                 "<b>%{customdata[0]}</b><br>"
-                "NUTS2: %{customdata[1]}<br>"
+                "NUTS%{customdata[3]}: %{customdata[1]}<br>"
                 "Balance: %{z:.1f} pp<br>"
                 "n=%{customdata[2]}<extra></extra>"
             ),
-            name="NUTS2 sentiment",
+            name="Regional sentiment",
         )
     )
     fig.add_trace(

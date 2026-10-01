@@ -25,6 +25,9 @@ from helpers.shape_resources import (
     load_shapes_parquet,
     normalize_key,
     nuts2_shapes,
+    regional_shapes,
+    region_level,
+    set_region_fields,
 )
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
@@ -96,11 +99,8 @@ def apply_geometry(df: pd.DataFrame, idx, row: pd.Series, level: str, source: st
         df.at[idx, "llm_country_candidates"] = country_candidates_json([canonical_country])
         df.at[idx, "llm_country_assignment_type"] = "single_country"
         df.at[idx, "llm_has_single_country"] = True
-    if level == "nuts2":
-        df.at[idx, "nuts2_id"] = row.get("parent_id")
-        df.at[idx, "nuts2_name"] = row.get("parent_name")
-        df.at[idx, "province_code"] = row.get("parent_id")
-        df.at[idx, "province_name"] = row.get("parent_name")
+    if level in {"nuts2", "nuts3"}:
+        set_region_fields(df, idx, row)
 
 
 def should_skip_geocoding(row: pd.Series, country_scope: CountryScope) -> bool:
@@ -153,9 +153,11 @@ def main() -> None:
     )
 
     shapes = load_shapes_parquet(args.shapes_parquet)
-    nuts2 = nuts2_shapes(shapes, country_scope.label)
+    regions = regional_shapes(shapes, country_scope.label)
+    coarse = nuts2_shapes(shapes, country_scope.label)
+    regions = pd.concat([regions, coarse[coarse["country_id"].eq("ITA")]])
     countries = country_shapes(shapes, country_scope.label)
-    nuts_lookup = build_lookup(nuts2)
+    nuts_lookup = build_lookup(regions)
     country_lookup = build_lookup(countries)
     country_aliases = country_alias_lookup(country_scope.label)
 
@@ -174,7 +176,7 @@ def main() -> None:
             df[col] = None
     for col in ["geo_lat", "geo_lon"]:
         df[col] = pd.NA
-    for col in ["geom_point_wkt", "geom_poly_wkt", "country_id", "nuts2_id", "nuts2_name", "province_code", "province_name"]:
+    for col in ["geom_point_wkt", "geom_poly_wkt", "country_id", "nuts2_id", "nuts2_name", "nuts3_id", "nuts3_name", "province_code", "province_name"]:
         if col not in df.columns:
             df[col] = None
         else:
@@ -196,7 +198,8 @@ def main() -> None:
             continue
         nuts_row = nuts_lookup.get(loc_norm)
         if nuts_row is not None:
-            apply_geometry(df, idx, nuts_row, "nuts2", "shapes_parquet", "nuts2_name_or_id")
+            level = region_level(nuts_row)
+            apply_geometry(df, idx, nuts_row, level, "shapes_parquet", f"{level}_name_or_id")
 
     write_outputs(
         df,

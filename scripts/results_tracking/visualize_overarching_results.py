@@ -19,10 +19,10 @@ import pandas as pd
 from shapely.geometry import Point, box
 
 from core_workflow.classification_sentences import attach_geometry_from_wkt
-from core_workflow.geographic_aggregation import assign_nuts2
+from core_workflow.geographic_aggregation import assign_regions
 from helpers.country_scope import COUNTRY_ORDER, countries_from_value, country_name_for_id, single_country_from_row
 from helpers.language_resources import load_keyword_csv
-from helpers.shape_resources import load_shapes_parquet, nuts2_shapes
+from helpers.shape_resources import load_shapes_parquet, regional_shapes
 from helpers.visual_constants import SENTIMENT_COLORS, SENTIMENT_ORDER, country_color
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
@@ -234,7 +234,7 @@ def read_admin_tables(
             sentences = sentences.drop(columns=frame_columns[1:], errors="ignore")
             sentences = sentences.merge(frame_metadata, on="sentence_uid", how="left", validate="one_to_one")
             gdf, _, _ = attach_geometry_from_wkt(sentences)
-            gdf = assign_nuts2(gdf, nuts2_shapes(shapes, country_scope_label).to_crs(gdf.crs))
+            gdf = assign_regions(gdf, regional_shapes(shapes, country_scope_label).to_crs(gdf.crs))
             points = gdf.geometry.representative_point()
             gdf["lon"], gdf["lat"] = points.x, points.y
             df = pd.DataFrame(gdf.drop(columns="geometry"))
@@ -290,7 +290,7 @@ def province_row_mask(df: pd.DataFrame) -> pd.Series:
 
     has_province = df["province_name"].notna() & df["province_name"].astype(str).str.strip().ne("")
     if "admin_level" in df.columns:
-        return has_province & df["admin_level"].astype(str).str.strip().str.lower().eq("nuts2")
+        return has_province & df["admin_level"].astype(str).str.strip().str.lower().isin(["nuts2", "nuts3"])
 
     province_key = df["province_name"].fillna("").map(normalize_key)
     country = df["country"] if "country" in df.columns else pd.Series("", index=df.index, dtype=object)
@@ -909,6 +909,37 @@ def select_global_extreme_regions(province_summary: pd.DataFrame, n: int = 3) ->
     return pd.concat([low, high], ignore_index=True)
 
 
+def build_extreme_region_sentence_table(
+    admin_df: pd.DataFrame, province_tbl: pd.DataFrame,
+) -> pd.DataFrame:
+    """Export framed sentences from the same six regions used in the figures."""
+    keys = ["language", "country", "province_name"]
+    selected = select_global_extreme_regions(province_tbl)[
+        keys + ["province_role", "polarity_balance", "n_text_units"]
+    ].rename(columns={
+        "polarity_balance": "province_polarity_balance",
+        "n_text_units": "province_n_text_units",
+    })
+    selected["region_order"] = range(len(selected))
+    sentences = admin_df.loc[
+        province_row_mask(admin_df)
+        & admin_df["matched_categories_str"].apply(parse_semicolon_values).map(bool)
+    ].copy()
+    sentences["province_name"] = sentences["province_name"].astype(str).str.strip()
+    sentences = sentences.merge(selected, on=keys, how="inner", validate="many_to_one")
+    sentences = sentences.sort_values(["region_order", "sentence_uid"], kind="stable")
+    sentences = sentences.drop_duplicates(keys + ["sentence_uid"])
+    columns = [
+        "province_role", "language", "country", "province_name", "province_code",
+        "province_polarity_balance", "province_n_text_units", "sentence_uid",
+        "sentence_text", "matched_categories_str", "matched_keywords_str",
+        "sentiment", "sentiment_norm", "sentiment_confidence", "sentiment_status",
+        "paragraph_uid", "paragraph_text", "title", "newspaper", "date",
+        "date_parsed", "source_file", "source_relative_path",
+    ]
+    return sentences[[col for col in columns if col in sentences]].reset_index(drop=True)
+
+
 def build_country_extreme_province_frame_share_table(
     admin_df: pd.DataFrame,
     province_tbl: pd.DataFrame,
@@ -1399,7 +1430,7 @@ def load_province_polygons(
     frames: list[gpd.GeoDataFrame] = []
     shapes = load_shapes_parquet(shapes_parquet)
     for language, country_scope_label in zip(languages, countries, strict=True):
-        gdf = nuts2_shapes(shapes, country_scope_label)
+        gdf = regional_shapes(shapes, country_scope_label)
         gdf = gdf[["country_id", "parent_id", "parent_name", "geometry"]].rename(
             columns={"parent_id": "province_code", "parent_name": "province_name"}
         ).copy()
@@ -1722,6 +1753,10 @@ def main() -> None:
 
     province_tbl = build_province_sentiment_table(admin_df, args.languages)
     province_tbl.to_csv(table_dir / "all_languages_province_sentiment_table.csv", index=False)
+    extreme_sentences = build_extreme_region_sentence_table(admin_df, province_tbl)
+    extreme_sentences.to_csv(
+        table_dir / "all_languages_extreme_province_frame_sentences.csv", index=False
+    )
     plot_province_balance(province_tbl, output_dir / "all_languages_province_sentiment_balance.png")
     plot_province_balance(
         province_tbl, output_dir / "all_languages_extreme_province_sentiment_balance.png", extremes_only=True
@@ -1758,6 +1793,7 @@ def main() -> None:
     )
 
     print("Wrote:", table_dir / "all_languages_province_sentiment_table.csv")
+    print("Wrote:", table_dir / "all_languages_extreme_province_frame_sentences.csv")
     print("Wrote:", output_dir / "all_languages_province_sentiment_balance.png")
     print("Wrote:", table_dir / "all_languages_extreme_province_frame_shares_table.csv")
     print("Wrote:", table_dir / "frame_mentions_100pct_stacked_table.csv")

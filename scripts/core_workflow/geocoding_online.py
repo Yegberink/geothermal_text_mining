@@ -18,7 +18,7 @@ import pandas as pd
 from shapely.geometry import Point
 
 from helpers.country_scope import country_candidates_for_label, country_name_for_id, country_scope_from_args, country_candidates_json
-from helpers.shape_resources import centroid_point, load_shapes_parquet, normalize_key, nuts2_shapes
+from helpers.shape_resources import centroid_point, load_shapes_parquet, normalize_key, nuts2_shapes, regional_shapes, region_level, set_region_fields
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 
@@ -39,6 +39,7 @@ OVERRIDE_COLUMNS = [
     "target_name",
     "country_id",
     "nuts2_id",
+    "nuts3_id",
     "lat",
     "lon",
     "notes",
@@ -141,7 +142,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--countries", nargs="+", default=None)
     ap.add_argument("--country-scope", type=str, default="")
     ap.add_argument("--country-codes", type=str, default="")
-    ap.add_argument("--attach-nuts2-polygons-for-online-points", action="store_true")
+    ap.add_argument("--attach-region-polygons-for-online-points", "--attach-nuts2-polygons-for-online-points",
+                    dest="attach_region_polygons_for_online_points", action="store_true")
     ap.add_argument("--points-layer", type=str, default="paragraphs_points")
     ap.add_argument("--polygons-layer", type=str, default="paragraphs_polygons")
     return ap.parse_args()
@@ -292,9 +294,9 @@ def load_location_geocoding_overrides(path: Path | None) -> pd.DataFrame:
     return out[out["_location_norm"].ne("")].copy()
 
 
-def build_nuts2_lookup(nuts2: gpd.GeoDataFrame) -> dict[str, pd.Series]:
+def build_region_lookup(regions: gpd.GeoDataFrame) -> dict[str, pd.Series]:
     lookup: dict[str, pd.Series] = {}
-    for _, row in nuts2.iterrows():
+    for _, row in regions.iterrows():
         for value in [row.get("parent_id"), row.get("parent_name")]:
             key = normalize_key(value)
             if key:
@@ -302,18 +304,18 @@ def build_nuts2_lookup(nuts2: gpd.GeoDataFrame) -> dict[str, pd.Series]:
     return lookup
 
 
-def resolve_nuts2_override(override: pd.Series, nuts2_lookup: dict[str, pd.Series]) -> pd.Series | None:
-    for value in [override.get("nuts2_id"), override.get("target_name")]:
+def resolve_region_override(override: pd.Series, region_lookup: dict[str, pd.Series]) -> pd.Series | None:
+    for value in [override.get(f"{override.get('action')}_id"), override.get("target_name")]:
         key = normalize_key(value)
-        if key and key in nuts2_lookup:
-            return nuts2_lookup[key]
+        if key and key in region_lookup:
+            return region_lookup[key]
     return None
 
 
-def apply_nuts2_geometry(df: pd.DataFrame, idx: Any, row: pd.Series, source: str, match_type: str) -> None:
+def apply_region_geometry(df: pd.DataFrame, idx: Any, row: pd.Series, source: str, match_type: str) -> None:
     geom = row.geometry
     point = centroid_point(geom)
-    df.at[idx, "geo_level"] = "nuts2"
+    df.at[idx, "geo_level"] = region_level(row)
     df.at[idx, "geo_source"] = source
     df.at[idx, "geo_match_type"] = match_type
     df.at[idx, "geo_name_matched"] = row.get("parent_name")
@@ -328,10 +330,7 @@ def apply_nuts2_geometry(df: pd.DataFrame, idx: Any, row: pd.Series, source: str
         df.at[idx, "llm_country_candidates"] = country_candidates_json([canonical_country])
         df.at[idx, "llm_country_assignment_type"] = "single_country"
         df.at[idx, "llm_has_single_country"] = True
-    df.at[idx, "nuts2_id"] = row.get("parent_id")
-    df.at[idx, "nuts2_name"] = row.get("parent_name")
-    df.at[idx, "province_code"] = row.get("parent_id")
-    df.at[idx, "province_name"] = row.get("parent_name")
+    set_region_fields(df, idx, row)
 
 
 def parse_float(value: object) -> float | None:
@@ -347,7 +346,7 @@ def parse_float(value: object) -> float | None:
 def apply_location_geocoding_overrides(
     df: pd.DataFrame,
     overrides: pd.DataFrame,
-    nuts2: gpd.GeoDataFrame,
+    regions: gpd.GeoDataFrame,
 ) -> pd.DataFrame:
     if overrides.empty:
         print("[workflow_table] paragraphs_geocoded_overrides: 0")
@@ -355,7 +354,7 @@ def apply_location_geocoding_overrides(
         return df
 
     override_lookup = overrides.drop_duplicates("_location_norm", keep="last").set_index("_location_norm")
-    nuts2_lookup = build_nuts2_lookup(nuts2)
+    region_lookup = build_region_lookup(regions)
     eligible = ~has_geometry_mask(df) & useful_granularity_mask(df) & df["_loc_first"].astype(str).str.strip().ne("")
     matched = 0
     ignored = 0
@@ -399,12 +398,12 @@ def apply_location_geocoding_overrides(
             matched += 1
             continue
 
-        if action == "nuts2":
-            nuts2_row = resolve_nuts2_override(override, nuts2_lookup)
-            if nuts2_row is None:
-                print(f"[warning] Skipping NUTS2 override without matching region for {override.get('location')!r}")
+        if action in {"nuts2", "nuts3"}:
+            region_row = resolve_region_override(override, region_lookup)
+            if region_row is None or region_level(region_row) != action:
+                print(f"[warning] Skipping {action.upper()} override without matching region for {override.get('location')!r}")
                 continue
-            apply_nuts2_geometry(df, idx, nuts2_row, "manual_override", "override_nuts2")
+            apply_region_geometry(df, idx, region_row, "manual_override", f"override_{action}")
             matched += 1
             continue
 
@@ -575,7 +574,7 @@ def ensure_output_columns(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = pd.NA
         df[col] = pd.to_numeric(df[col], errors="coerce").astype("Float64")
-    for col in ["geom_point_wkt", "geom_poly_wkt", "country_id", "nuts2_id", "nuts2_name", "province_code", "province_name"]:
+    for col in ["geom_point_wkt", "geom_poly_wkt", "country_id", "nuts2_id", "nuts2_name", "nuts3_id", "nuts3_name", "province_code", "province_name"]:
         if col not in df.columns:
             df[col] = None
     if "_loc_first" not in df.columns:
@@ -589,17 +588,18 @@ def ensure_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def apply_nuts2_assignment(df: pd.DataFrame, nuts2: gpd.GeoDataFrame, attach_polygons: bool) -> pd.DataFrame:
+def apply_region_assignment(df: pd.DataFrame, regions: gpd.GeoDataFrame, attach_polygons: bool) -> pd.DataFrame:
     source = df["geo_source"].astype(str)
     point_rows = (
         df["geom_point_wkt"].notna()
         & ~ignored_location_mask(df)
+        & ~df["geo_level"].isin(["country", "nuts2", "nuts3"])
         & (
             source.isin(["geonames", "manual_override"])
             | source.str.endswith("_cache", na=False)
         )
     )
-    if not point_rows.any() or nuts2.empty:
+    if not point_rows.any() or regions.empty:
         return df
 
     points = df.loc[point_rows, ["geom_point_wkt"]].copy()
@@ -608,7 +608,7 @@ def apply_nuts2_assignment(df: pd.DataFrame, nuts2: gpd.GeoDataFrame, attach_pol
         geometry=gpd.GeoSeries.from_wkt(points["geom_point_wkt"]),
         crs="EPSG:4326",
     )
-    regions = nuts2[["country_id", "parent_id", "parent_name", "geometry"]].copy().to_crs(points_gdf.crs)
+    regions = regions[["country_id", "parent_id", "parent_name", "parent_subtype", "geometry"]].copy().to_crs(points_gdf.crs)
     joined = gpd.sjoin(points_gdf, regions, predicate="within", how="left").drop(columns=["index_right"], errors="ignore")
     matched = joined["parent_id"].notna()
     if not matched.any():
@@ -616,10 +616,8 @@ def apply_nuts2_assignment(df: pd.DataFrame, nuts2: gpd.GeoDataFrame, attach_pol
 
     idxs = joined.index[matched]
     df.loc[idxs, "country_id"] = joined.loc[matched, "country_id"].values
-    df.loc[idxs, "nuts2_id"] = joined.loc[matched, "parent_id"].values
-    df.loc[idxs, "nuts2_name"] = joined.loc[matched, "parent_name"].values
-    df.loc[idxs, "province_code"] = joined.loc[matched, "parent_id"].values
-    df.loc[idxs, "province_name"] = joined.loc[matched, "parent_name"].values
+    for idx, row in joined.loc[matched].iterrows():
+        set_region_fields(df, idx, row)
     for idx in idxs:
         canonical_country = country_name_for_id(df.at[idx, "country_id"])
         if canonical_country:
@@ -629,12 +627,13 @@ def apply_nuts2_assignment(df: pd.DataFrame, nuts2: gpd.GeoDataFrame, attach_pol
             df.at[idx, "llm_has_single_country"] = True
     empty_match_type = df.loc[idxs, "geo_match_type"].isna() | df.loc[idxs, "geo_match_type"].astype(str).str.strip().eq("")
     if empty_match_type.any():
-        df.loc[empty_match_type[empty_match_type].index, "geo_match_type"] = "point_then_nuts2"
+        for idx in empty_match_type[empty_match_type].index:
+            df.at[idx, "geo_match_type"] = f"point_then_{region_level(joined.loc[idx])}"
 
     if attach_polygons:
         region_lookup = regions.set_index("parent_id")["geometry"].to_dict()
         for idx in idxs:
-            region_id = df.at[idx, "nuts2_id"]
+            region_id = df.at[idx, "province_code"]
             geom = region_lookup.get(region_id)
             if geom is not None:
                 df.at[idx, "geom_poly_wkt"] = geom.wkt
@@ -708,16 +707,16 @@ def write_unmatched_report(df: pd.DataFrame, path: Path) -> pd.DataFrame:
 
 
 def suggestion_candidates(
-    nuts2: gpd.GeoDataFrame,
+    regions: gpd.GeoDataFrame,
     gazetteer: pd.DataFrame,
     overrides: pd.DataFrame,
 ) -> dict[str, tuple[str, str]]:
     candidates: dict[str, tuple[str, str]] = {}
-    for _, row in nuts2.iterrows():
+    for _, row in regions.iterrows():
         for value in [row.get("parent_name"), row.get("parent_id")]:
             key = normalize_key(value)
             if key:
-                candidates.setdefault(key, (str(value), "nuts2"))
+                candidates.setdefault(key, (str(value), region_level(row)))
     if not gazetteer.empty:
         for _, row in gazetteer.iterrows():
             value = str(row.get("_match_name") or row.get("name") or "").strip()
@@ -817,7 +816,9 @@ def main() -> None:
     df = pd.read_csv(args.input_csv, dtype=str)
     df = ensure_output_columns(df)
     shapes = load_shapes_parquet(args.shapes_parquet)
-    nuts2 = nuts2_shapes(shapes, country_scope.label)
+    regions = regional_shapes(shapes, country_scope.label)
+    coarse = nuts2_shapes(shapes, country_scope.label)
+    matching_regions = pd.concat([regions, coarse[coarse["country_id"].eq("ITA")]])
     gazetteer = pd.DataFrame()
 
     for idx, loc_norm in df["_loc_first"].map(normalize_key).items():
@@ -834,7 +835,7 @@ def main() -> None:
         df.at[idx, "geom_poly_wkt"] = None
 
     overrides = load_location_geocoding_overrides(Path(args.overrides_csv) if args.overrides_csv else None)
-    df = apply_location_geocoding_overrides(df, overrides, nuts2)
+    df = apply_location_geocoding_overrides(df, overrides, matching_regions)
 
     if not args.disable_geonames:
         geonames_country_codes = parse_country_codes(args.geonames_country_codes or args.country_codes)
@@ -845,7 +846,7 @@ def main() -> None:
                 allow_download=args.download_geonames,
             )
             df = apply_geonames_matches(df, gazetteer)
-            df = apply_nuts2_assignment(df, nuts2, args.attach_nuts2_polygons_for_online_points)
+            df = apply_region_assignment(df, regions, args.attach_region_polygons_for_online_points)
         else:
             print("GeoNames lookup skipped: no country codes configured.")
 
@@ -857,12 +858,12 @@ def main() -> None:
             cache.update(load_geocoder_cache(Path(extra_cache_path)))
     df = apply_cached_geocoder_matches(df, cache, country_scope.label, args.country_codes)
 
-    df = apply_nuts2_assignment(df, nuts2, args.attach_nuts2_polygons_for_online_points)
+    df = apply_region_assignment(df, regions, args.attach_region_polygons_for_online_points)
     unmatched = write_unmatched_report(df, Path(args.unmatched_csv))
     write_suggestions_report(
         unmatched,
         Path(args.suggestions_csv),
-        suggestion_candidates(nuts2, gazetteer, overrides),
+        suggestion_candidates(matching_regions, gazetteer, overrides),
     )
 
     write_outputs(

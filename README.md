@@ -17,7 +17,7 @@ The current `Snakefile` runs the following pipeline:
 4. `scripts/core_workflow/locations_ollama.py`
    Keeps only paragraphs labelled `YES` and uses Ollama to extract the primary location discussed in each geothermal paragraph.
 5. `scripts/core_workflow/geocoding_offline.py`
-   Matches the extracted paragraph location against `data/shapes.parquet` NUTS2/country shapes.
+   Matches the extracted paragraph location against `data/shapes.parquet` regional/country shapes (NUTS3 for Italy, NUTS2 elsewhere).
 6. `scripts/core_workflow/geocoding_online.py`
    Finalises paragraph geocoding offline: language-specific manual overrides, GeoNames country gazetteers, and any previously filled geocoder cache are applied to remaining unmatched locations. The step also writes unmatched-location and suggestion reports for review.
 7. `scripts/core_workflow/split_paragraphs_to_sentences.py`
@@ -30,7 +30,7 @@ The current `Snakefile` runs the following pipeline:
 10. `scripts/core_workflow/classification_sentences.py`
    Builds the geocoded sentence-level frame outputs from inherited paragraph geometry and exports long/short tables plus a GeoPackage.
 11. `scripts/core_workflow/geographic_aggregation.py`
-    Assigns sentence-level geocoded outputs to NUTS2 regions from `data/shapes.parquet`.
+    Assigns sentence-level geocoded outputs to NUTS3 regions for Italy and NUTS2 regions elsewhere from `data/shapes.parquet`.
 12. `scripts/results_tracking/visualize_absa_results.py`
     Produces the province-level and category-level sentiment figures plus an interactive HTML location map.
 13. `scripts/core_workflow/make_annotation_df.py`
@@ -38,7 +38,7 @@ The current `Snakefile` runs the following pipeline:
 
 The main sentiment and results path is:
 
-`RTF files -> cleaned paragraphs -> geothermal paragraph classification (20–499 words) -> YES paragraphs -> paragraph location extraction -> shapes-parquet paragraph geocoding -> offline final geocoding -> geometry filter -> sentence split with inherited geo fields -> sentence sentiment -> sentence frame outputs -> NUTS2 aggregation -> figures + interactive map + annotation export`
+`RTF files -> cleaned paragraphs -> geothermal paragraph classification (20–499 words) -> YES paragraphs -> paragraph location extraction -> shapes-parquet paragraph geocoding -> offline final geocoding -> geometry filter -> sentence split with inherited geo fields -> sentence sentiment -> sentence frame outputs -> regional aggregation (Italy: NUTS3; others: NUTS2) -> figures + interactive map + annotation export`
 
 Language-specific frame outputs, aggregation, visualisations, and annotation retain their existing behavior. Generic reporting uses all eligible sentence sentiments for regional balances.
 
@@ -58,7 +58,11 @@ The workflow expects one folder per language:
 - raw newspaper `.rtf` and `.pdf` files in `data/text_data/{language}/`
 - a frame/topic keyword file in `data/vocab/{language}/keywords_topics.csv`
 
-The shared administrative geography source is `data/shapes.parquet`, containing European country shapes and NUTS2 regions for the countries of interest. It is used for local matching, aggregation, and map visualisation. GeoNames country extracts live in `data/geonames/` for offline point matching. Public online geocoders are not contacted by the default workflow.
+The shared administrative geography source is `data/shapes.parquet`, containing European country shapes and regional boundaries for the countries of interest. Italy uses NUTS3; Germany, Austria, Switzerland, and the Netherlands use NUTS2. It is used for local matching, aggregation, and map visualisation.
+
+The Italian NUTS3 boundaries are the 107 land regions in [Eurostat GISCO NUTS 2024, 1:1 million](https://gisco-services.ec.europa.eu/distribution/v2/nuts/geojson/NUTS_RG_01M_2024_4326_LEVL_3.geojson). To rebuild this addition from the downloaded GeoJSON, run `pixi run python scripts/helpers/add_italian_nuts3.py --geojson FILE`. This writes `data/shapes_italian_nuts3.parquet`, which the shared shape loader reads alongside `data/shapes.parquet`. The base file is preserved, including its checksum for existing Dutch annotation judgments. Custom shape files can use the same `<stem>_italian_nuts3.parquet` sibling convention.
+
+Italian NUTS2 names remain available for coarse location matching, but those mentions are excluded from province totals because they do not identify a NUTS3 region. Outputs use `nuts3_id`/`nuts3_name` for Italy and `nuts2_id`/`nuts2_name` elsewhere; `province_code`/`province_name` carry the selected region for plotting. GeoNames country extracts live in `data/geonames/` for offline point matching. Public online geocoders are not contacted by the default workflow.
 
 With `languages: auto`, Snakemake discovers every `data/vocab/{language}/keywords_topics.csv` that also has `data/text_data/{language}/`.
 
@@ -95,13 +99,16 @@ Running `snakemake` with no explicit target builds these outputs for every disco
 - `output/generic/text/all_languages_province_sentiment_table.csv`
 - `output/generic/figures/all_languages_province_sentiment_balance.png`
 - `output/generic/text/all_languages_extreme_province_frame_shares_table.csv`
+- `output/generic/text/all_languages_extreme_province_frame_sentences.csv`
 - `output/generic/text/frame_mentions_100pct_stacked_table.csv`
 - `output/generic/figures/frame_mentions_100pct_stacked.png`
 - `output/generic/figures/all_languages_province_sentiment_map.png`
 
-Generic figure generation produces only the three PNGs listed above. All three use the same global selection: the three lowest and three highest regional sentiment balances (positive percentage minus negative percentage), across countries, excluding country averages and regions with fewer than 40 sentences. Ties prefer more sentences, then country, region, and language alphabetically. If fewer than six regions qualify, the two tails remain disjoint. The map and balance chart highlight these regions; the stacked figure shows their frame composition, grouped by low/high sentiment. Regions with no frame mentions remain selected and have an empty composition bar.
+Generic figure generation produces only the three PNGs listed above. All three use the same global selection: the three lowest and three highest regional sentiment balances (positive percentage minus negative percentage), across countries, excluding country averages and regions with fewer than 500 sentences. Ties prefer more sentences, then country, region, and language alphabetically. If fewer than six regions qualify, the two tails remain disjoint. The map and balance chart highlight these regions; the stacked figure shows their frame composition, grouped by low/high sentiment. Regions with no frame mentions remain selected and have an empty composition bar.
 
 Regional balances use all successfully classified eligible sentences, including sentences without frames. Frame composition uses matched frames only. Existing obsolete generic images are not deleted, but are no longer generated or required by the workflow.
+
+`all_languages_extreme_province_frame_sentences.csv` exports the sentences with at least one matched frame from those same three lowest and three highest regions. It includes all sentence sentiments (negative, neutral, and positive) in the reporting data, with one row per sentence per region and semicolon-separated frames/keywords, plus regional balance, sentence identifiers, paragraph context, and article source details.
 
 `output/generic/text/data_tracking.csv` has ten rows, each with counts and unique-document counts by language: documents extracted from files, unique cleaned documents, total paragraphs, paragraphs after the 20–499-word filter, geothermal `YES` paragraphs, paragraphs with geometry, total sentences, sentences with successful sentiment, sentences with frames, and sentences with both frames and successful sentiment. The last row matches sentence identifiers across the frame and sentiment tables. Counts describe saved intermediate files; rerun upstream stages to reflect changes to filtering.
 
@@ -191,7 +198,7 @@ The override schema is:
 location,action,target_type,target_name,country_id,nuts2_id,lat,lon,notes
 ```
 
-Supported actions are `nuts2`, `point`, and `ignore`. After each default run, review:
+Supported actions are `nuts2`, `nuts3`, `point`, and `ignore`. Use `nuts3_id` for Italian NUTS3 overrides (`nuts2_id` remains supported for NUTS2 overrides). After each default run, review:
 
 - `output/{language}/text/geocoding_unmatched.csv`
 - `output/{language}/text/geocoding_suggestions.csv`

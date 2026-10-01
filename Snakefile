@@ -10,6 +10,7 @@ PROJECT_DIR = Path(workflow.basedir).resolve()
 sys.path.insert(0, str(PROJECT_DIR / "scripts"))
 
 from helpers.country_scope import country_scope_from_config, countries_from_value
+from helpers.shape_resources import shape_resource_paths
 
 PYTHON = f"PYTHONPATH={shlex.quote(str(PROJECT_DIR / 'scripts'))} {config.get('python', 'python')}"
 OLLAMA = config["ollama"]
@@ -218,6 +219,7 @@ OVERARCHING_TARGETS = [
     "output/generic/figures/all_languages_province_sentiment_balance.png",
     "output/generic/text/all_languages_province_sentiment_table.csv",
     "output/generic/text/all_languages_extreme_province_frame_shares_table.csv",
+    "output/generic/text/all_languages_extreme_province_frame_sentences.csv",
     "output/generic/text/frame_mentions_100pct_stacked_table.csv",
     "output/generic/figures/frame_mentions_100pct_stacked.png",
     "output/generic/figures/all_languages_province_sentiment_map.png",
@@ -383,6 +385,7 @@ rule geocode_paragraphs_shapes:
     input:
         csv=pattern_for("paragraph_locations_csv"),
         shapes=PATHS["shapes_parquet"],
+        shape_supplements=shape_resource_paths(PATHS["shapes_parquet"])[1:],
     output:
         gpkg=pattern_for("paragraphs_with_geo_shapes_gpkg"),
         csv=pattern_for("paragraph_shapes_geocoding_csv"),
@@ -408,6 +411,7 @@ rule geocode_paragraphs_cache_candidates:
     input:
         csv=pattern_for("paragraph_shapes_geocoding_csv"),
         shapes=PATHS["shapes_parquet"],
+        shape_supplements=shape_resource_paths(PATHS["shapes_parquet"])[1:],
         overrides=lambda wildcards: _language_resource_path(wildcards.language, "location_geocoding_overrides.csv"),
     output:
         gpkg=temp("output/{language}/workflow/paragraphs_with_geo_online_candidates.gpkg"),
@@ -504,6 +508,7 @@ rule geocode_paragraphs_final:
     input:
         csv=pattern_for("paragraph_shapes_geocoding_csv"),
         shapes=PATHS["shapes_parquet"],
+        shape_supplements=shape_resource_paths(PATHS["shapes_parquet"])[1:],
         overrides=lambda wildcards: _language_resource_path(wildcards.language, "location_geocoding_overrides.csv"),
         cache_done=PATHS["geocode_unmatched_online_done"],
     output:
@@ -634,6 +639,7 @@ rule aggregate_to_admin_areas:
     input:
         gpkg=pattern_for("sentences_with_categories_gpkg"),
         shapes=PATHS["shapes_parquet"],
+        shape_supplements=shape_resource_paths(PATHS["shapes_parquet"])[1:],
     output:
         gpkg=pattern_for("sentences_with_categories_admin_gpkg"),
         csv=pattern_for("sentences_with_categories_admin_csv"),
@@ -686,6 +692,7 @@ rule visualize_absa_results:
         categories_csv=pattern_for("sentences_with_categories_short_csv"),
         keywords_csv=pattern_for("keywords_topics_csv"),
         shapes=PATHS["shapes_parquet"],
+        shape_supplements=shape_resource_paths(PATHS["shapes_parquet"])[1:],
         script=str(PROJECT_DIR / "scripts" / "results_tracking" / "visualize_absa_results.py"),
     output:
         frame_keywords=directory(pattern_for("frame_keywords_dir")),
@@ -726,6 +733,7 @@ rule visualize_overarching_results:
         admin_csvs=expand(pattern_for("sentences_with_categories_admin_csv"), language=LANGUAGES),
         sentiment_csvs=expand(pattern_for("sentence_sentiment_csv"), language=LANGUAGES),
         shapes=PATHS["shapes_parquet"],
+        shape_supplements=shape_resource_paths(PATHS["shapes_parquet"])[1:],
         script=str(PROJECT_DIR / "scripts" / "results_tracking" / "visualize_overarching_results.py"),
     output:
         extreme_balance="output/generic/figures/all_languages_extreme_province_sentiment_balance.png",
@@ -734,6 +742,7 @@ rule visualize_overarching_results:
         balance="output/generic/figures/all_languages_province_sentiment_balance.png",
         province_table="output/generic/text/all_languages_province_sentiment_table.csv",
         extreme_province_frame_shares_table="output/generic/text/all_languages_extreme_province_frame_shares_table.csv",
+        extreme_province_frame_sentences="output/generic/text/all_languages_extreme_province_frame_sentences.csv",
         frame_mentions_stacked_table="output/generic/text/frame_mentions_100pct_stacked_table.csv",
         frame_mentions_stacked_png="output/generic/figures/frame_mentions_100pct_stacked.png",
         sentiment_map="output/generic/figures/all_languages_province_sentiment_map.png",
